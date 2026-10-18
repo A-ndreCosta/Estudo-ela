@@ -1,0 +1,1409 @@
+/* ==========================================================
+   Estudo · Dashboard — script.js
+   Núcleo (estado, tema, semestres, definições, exportar/importar)
+   + Notas e Médias + Dashboard + Calendário + Horário + Checklist + Ficheiros.
+   A sincronização na nuvem está em sync.js.
+   ========================================================== */
+'use strict';
+
+/* ---------- Utilitários ---------- */
+const STORAGE_KEY = 'estudo-ela-v1';
+const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const pad = n => String(n).padStart(2, '0');
+const toISO = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const fmt = n => (n == null ? '—' : n.toLocaleString('pt-PT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+const num = n => String(n).replace('.', ',');
+const isHex = c => typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c);
+const mean = arr => arr.reduce((a, b) => a + b, 0) / arr.length;
+const DEFAULT_COLOR = '#6366f1';
+const isISODate = s => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s);
+const isTime = s => typeof s === 'string' && /^\d{2}:\d{2}$/.test(s);
+
+let toastTimer;
+function toast(msg) {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 3200);
+}
+
+/* ---------- Dados iniciais (só na primeira vez) ---------- */
+function seedState() {
+  const s1 = (id, name, color, components = []) => ({ id, semester: 's1', name, color, components });
+  return {
+    version: 1,
+    updatedAt: 0, // 0 = nunca alterado (dados iniciais)
+    currentSemester: 's1',
+    theme: null, // null = segue o sistema; 'light' | 'dark' = escolha manual
+    semesters: {
+      s1: { name: '1º Semestre', start: '2026-09-01', end: '2027-01-30' },
+      s2: { name: '2º Semestre', start: '2027-02-01', end: '2027-06-26' }
+    },
+    disciplines: [
+      s1('d-mc', 'Matemática Computacional', '#6366f1', [
+        { id: 'c-mc-t1', name: 'Teste 1', weight: 35 },
+        { id: 'c-mc-t2', name: 'Teste 2', weight: 35 }, // feito na data do 1.º exame
+        { id: 'c-mc-tp', name: 'Trabalho prático', weight: 20 },
+        { id: 'c-mc-ex', name: 'Exercícios (Moodle e/ou aula)', weight: 10 }
+      ]),
+      s1('d-om', 'Otimização Matemática', '#14b8a6', [
+        { id: 'c-om-ti', name: 'Teste intercalar', weight: 25 },
+        { id: 'c-om-py', name: 'Trabalho com Python', weight: 25 },
+        { id: 'c-om-tf', name: 'Teste final', weight: 50 }
+      ]),
+      s1('d-proj', 'Projeto', '#a855f7', [
+        { id: 'c-proj-doc', name: 'Entrega final · documento', weight: 60 },
+        { id: 'c-proj-disc', name: 'Discussão e apresentação individual', weight: 20 },
+        { id: 'c-proj-ap1', name: 'Apresentação 1', weight: 5 },
+        { id: 'c-proj-ap2', name: 'Apresentação 2', weight: 5 },
+        { id: 'c-proj-ap3', name: 'Apresentação 3', weight: 5 },
+        { id: 'c-proj-ap4', name: 'Apresentação 4', weight: 5 }
+      ]),
+      s1('d-tes', 'Tecnologia, Economia e Sociedade', '#f59e0b', [
+        { id: 'c-tes-d1', name: 'Debate 1', weight: 15 },
+        { id: 'c-tes-d2', name: 'Debate 2', weight: 15 },
+        { id: 'c-tes-d3', name: 'Debate 3', weight: 15 },
+        { id: 'c-tes-part', name: 'Participação (aula e debates)', weight: 5 },
+        { id: 'c-tes-tf', name: 'Teste final', weight: 50 }
+      ]),
+      s1('d-emp3', 'Empreendedorismo III', '#f43f5e', [
+        { id: 'c-emp-e1', name: 'Entrega 1', weight: 40 },
+        { id: 'c-emp-e2', name: 'Entrega 2', weight: 40 },
+        { id: 'c-emp-af', name: 'Apresentação final', weight: 20 }
+      ])
+    ],
+    grades: [],
+    events: [
+      { id: 'e-tes-trabalho', title: 'Trabalho', date: '2026-10-23', time: '14:00', disciplineId: 'd-tes', type: 'tarefa' },
+      { id: 'e-om-teste', title: 'Teste', date: '2026-10-29', time: '09:30', disciplineId: 'd-om', type: 'teste' },
+      { id: 'e-mc-teste', title: 'Teste', date: '2026-11-05', time: '09:30', disciplineId: 'd-mc', type: 'teste' },
+      { id: 'e-emp-e1', title: 'Entrega 1 (data a confirmar)', date: '2026-11-08', time: '', disciplineId: 'd-emp3', type: 'tarefa' },
+      { id: 'e-emp-e2', title: 'Entrega 2 (data a confirmar)', date: '2026-12-13', time: '', disciplineId: 'd-emp3', type: 'tarefa' },
+      { id: 'e-proj-exame', title: 'Exame', date: '2027-01-11', time: '', disciplineId: 'd-proj', type: 'teste' }
+    ],
+    tasks: [],
+    links: [],
+    // horário semanal (day: 1 = segunda … 7 = domingo)
+    schedule: [
+      { id: 'h-proj-ter', day: 2, start: '14:00', end: '17:00', disciplineId: 'd-proj' },
+      { id: 'h-mc-qui', day: 4, start: '09:30', end: '12:30', disciplineId: 'd-mc' },
+      { id: 'h-om-qui', day: 4, start: '14:00', end: '17:00', disciplineId: 'd-om' },
+      { id: 'h-emp-sex', day: 5, start: '09:30', end: '12:30', disciplineId: 'd-emp3' },
+      { id: 'h-tes-sex', day: 5, start: '14:00', end: '17:00', disciplineId: 'd-tes' },
+      { id: 'h-expl-ter', day: 2, start: '18:00', end: '19:00', disciplineId: '', title: 'Explicações de Matemática' },
+      { id: 'h-expl-qua', day: 3, start: '16:00', end: '17:00', disciplineId: '', title: 'Explicações de Matemática' },
+      { id: 'h-expl-qui', day: 4, start: '18:00', end: '19:00', disciplineId: '', title: 'Explicações de Matemática' }
+    ]
+  };
+}
+
+/* ---------- Estado + localStorage ---------- */
+/* Tarefa: com dia (date), com início e fim (start+end) ou sem prazo (date vazio). */
+function normalizeTask(t) {
+  if (!t || typeof t.title !== 'string') return null;
+  const start = isISODate(t.start) ? t.start : (isISODate(t.startDate) ? t.startDate : '');
+  const end = isISODate(t.end) ? t.end : (isISODate(t.endDate) ? t.endDate : '');
+  const out = {
+    id: typeof t.id === 'string' && t.id ? t.id : uid(),
+    title: t.title,
+    disciplineId: typeof t.disciplineId === 'string' ? t.disciplineId : '',
+    done: !!t.done,
+    date: ''
+  };
+  if (isISODate(t.doneDate)) out.doneDate = t.doneDate;
+  if (typeof t.note === 'string' && t.note.trim()) out.note = t.note.trim();
+  if (start && end && start <= end) { out.start = start; out.end = end; }
+  else out.date = isISODate(t.date) ? t.date : (end || '');
+  return out;
+}
+
+/* Entrada do horário: dia da semana (1 = segunda … 7 = domingo), início e fim, disciplina (opcional) e nome (opcional). */
+function cleanSched(s) {
+  if (!s || typeof s.id !== 'string' || !s.id) return null;
+  if (!Number.isInteger(s.day) || s.day < 1 || s.day > 7 || !isTime(s.start) || !isTime(s.end) || s.end <= s.start) return null;
+  const out = { id: s.id, day: s.day, start: s.start, end: s.end, disciplineId: typeof s.disciplineId === 'string' ? s.disciplineId : '' };
+  if (typeof s.title === 'string' && s.title.trim()) out.title = s.title.trim();
+  return out;
+}
+
+function normalizeState(s) {
+  const st = Object.assign({
+    version: 1, updatedAt: 0, currentSemester: 's1', theme: null,
+    semesters: seedState().semesters,
+    disciplines: [], grades: [], events: [], tasks: [], links: [], schedule: []
+  }, s);
+  ['disciplines', 'grades', 'events', 'tasks', 'links', 'schedule'].forEach(k => { if (!Array.isArray(st[k])) st[k] = []; });
+  if (!st.semesters || typeof st.semesters !== 'object') st.semesters = seedState().semesters;
+  st.disciplines.forEach(d => { if (!Array.isArray(d.components)) d.components = []; });
+  st.tasks = st.tasks.map(normalizeTask).filter(Boolean);
+  st.schedule = st.schedule.map(cleanSched).filter(Boolean);
+  if (!st.semesters[st.currentSemester]) st.currentSemester = Object.keys(st.semesters)[0];
+  if (!Number.isFinite(st.updatedAt)) st.updatedAt = 0;
+  return st;
+}
+
+function loadState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const s = JSON.parse(raw);
+      if (s && typeof s === 'object') return normalizeState(s);
+    }
+  } catch (e) { console.warn('Não foi possível ler os dados guardados.', e); }
+  return normalizeState(seedState());
+}
+
+let state = loadState();
+
+// guarda só neste aparelho (tema, semestre escolhido)
+function saveLocal() {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+  catch (e) { toast('Não foi possível guardar (armazenamento cheio ou bloqueado).'); }
+}
+// guarda neste aparelho e envia para a nuvem (se tiveres entrado)
+function save() {
+  state.updatedAt = Date.now();
+  saveLocal();
+  if (window.estudoCloud) window.estudoCloud.push();
+}
+
+const semDisciplines = () => state.disciplines.filter(d => d.semester === state.currentSemester);
+const findDisc = id => state.disciplines.find(d => d.id === id);
+
+/* ---------- Formulários: nunca recarregar a página ---------- */
+document.addEventListener('submit', e => {
+  if (e.target.getAttribute('method') !== 'dialog') e.preventDefault();
+});
+
+/* ---------- Tema (segue o sistema; botão para trocar) ---------- */
+const darkQuery = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+const currentTheme = () => state.theme || (darkQuery && darkQuery.matches ? 'dark' : 'light');
+const applyTheme = () => { document.documentElement.dataset.theme = currentTheme(); };
+
+$('#theme-toggle').addEventListener('click', () => {
+  state.theme = currentTheme() === 'dark' ? 'light' : 'dark';
+  saveLocal();
+  applyTheme();
+});
+if (darkQuery && darkQuery.addEventListener) {
+  darkQuery.addEventListener('change', () => { if (!state.theme) applyTheme(); });
+}
+
+/* ---------- Separadores ---------- */
+function showTab(name) {
+  $$('.tab-panel').forEach(p => p.classList.toggle('active', p.id === 'tab-' + name));
+  $$('#tabs .tab').forEach(b => {
+    const on = b.dataset.tab === name;
+    b.classList.toggle('active', on);
+    if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+  });
+  window.scrollTo({ top: 0 });
+}
+$('#tabs').addEventListener('click', e => {
+  const b = e.target.closest('.tab');
+  if (b) showTab(b.dataset.tab);
+});
+
+/* ---------- Seletor de semestre ---------- */
+function renderSemesterSelect() {
+  const sel = $('#semester-select');
+  sel.innerHTML = Object.entries(state.semesters)
+    .map(([k, s]) => `<option value="${esc(k)}">${esc(s.name)}</option>`).join('');
+  sel.value = state.currentSemester;
+}
+$('#semester-select').addEventListener('change', e => {
+  state.currentSemester = e.target.value;
+  saveLocal();
+  renderAll();
+});
+
+/* ==========================================================
+   NOTAS E MÉDIAS
+   - Sem componentes definidos → média simples dos itens.
+   - Com componentes (peso %) → média de cada componente e,
+     depois, média ponderada das componentes que já têm nota.
+   - Média global = média simples das médias das disciplinas.
+   ========================================================== */
+function componentAverage(d, c) {
+  const vals = state.grades.filter(g => g.disciplineId === d.id && g.componentId === c.id).map(g => g.value);
+  return vals.length ? mean(vals) : null;
+}
+
+function disciplineAverage(d) {
+  const gs = state.grades.filter(g => g.disciplineId === d.id);
+  if (!gs.length) return { value: null, mode: 'none' };
+  const comps = (d.components || []).filter(c => c.weight > 0);
+  if (comps.length) {
+    let sum = 0, covered = 0;
+    comps.forEach(c => {
+      const a = componentAverage(d, c);
+      if (a != null) { sum += a * c.weight; covered += c.weight; }
+    });
+    if (covered > 0) {
+      return { value: sum / covered, mode: 'ponderada', covered, total: comps.reduce((a, c) => a + c.weight, 0) };
+    }
+  }
+  return { value: mean(gs.map(g => g.value)), mode: 'simples' };
+}
+
+function averageOf(discs) {
+  const vals = discs.map(d => disciplineAverage(d).value).filter(v => v != null);
+  return vals.length ? mean(vals) : null;
+}
+
+function parseGrade(v) {
+  const n = parseFloat(String(v).replace(',', '.'));
+  return Number.isFinite(n) && n >= 0 && n <= 20 ? Math.round(n * 100) / 100 : null;
+}
+
+function renderGrades() {
+  const discs = semDisciplines();
+  $('#semester-average').textContent = fmt(averageOf(discs));
+  $('#global-average').textContent = fmt(averageOf(state.disciplines));
+
+  const box = $('#grades-list');
+  if (!discs.length) {
+    box.innerHTML = '<div class="card empty">Ainda não há disciplinas neste semestre. Adiciona-as em ⚙ Definições.</div>';
+    return;
+  }
+
+  box.innerHTML = discs.map(d => {
+    const avg = disciplineAverage(d);
+    const comps = d.components || [];
+    const gs = state.grades.filter(g => g.disciplineId === d.id);
+    const compOptions = (selected) => '<option value="">— sem componente —</option>' +
+      comps.map(c => `<option value="${esc(c.id)}"${c.id === selected ? ' selected' : ''}>${esc(c.name)}</option>`).join('');
+
+    let hint = 'sem notas';
+    if (avg.mode === 'simples') hint = 'média simples';
+    if (avg.mode === 'ponderada') {
+      hint = 'média ponderada' + (avg.covered < avg.total ? ` · ${num(Math.round(avg.covered * 10) / 10)}% do peso com nota` : '');
+    }
+
+    const compSummary = comps.length ? `
+      <ul class="comp-list">
+        ${comps.map(c => `
+          <li>
+            <span>${esc(c.name)} <span class="meta">· ${num(c.weight)}%${c.min != null ? ` · mín. ${num(c.min)}` : ''}</span></span>
+            <strong>${fmt(componentAverage(d, c))}</strong>
+          </li>`).join('')}
+      </ul>` : '';
+
+    const rows = gs.length ? gs.map(g => `
+      <tr>
+        <td>${esc(g.name)}</td>
+        ${comps.length ? `<td><select class="grade-comp" data-id="${esc(g.id)}" aria-label="Componente">${compOptions(g.componentId)}</select></td>` : ''}
+        <td><input class="grade-input" type="number" inputmode="decimal" min="0" max="20" step="0.01" value="${g.value}" data-id="${esc(g.id)}" aria-label="Nota de ${esc(g.name)}"></td>
+        <td><button type="button" class="icon-btn danger" data-action="del-grade" data-id="${esc(g.id)}" aria-label="Apagar ${esc(g.name)}">✕</button></td>
+      </tr>`).join('')
+      : `<tr class="no-items"><td colspan="${comps.length ? 4 : 3}">Ainda sem notas.</td></tr>`;
+
+    return `
+      <article class="card grade-card" style="--c:${isHex(d.color) ? d.color : DEFAULT_COLOR}">
+        <header class="grade-head">
+          <h2><span class="dot"></span>${esc(d.name)}</h2>
+          <div class="grade-avg"><strong>${fmt(avg.value)}</strong><small>${hint}</small></div>
+        </header>
+        ${compSummary}
+        <div class="table-wrap">
+          <table class="grades-table">
+            <thead><tr><th>Item</th>${comps.length ? '<th>Componente</th>' : ''}<th>Nota (0–20)</th><th></th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+        <form class="grade-form" data-disc="${esc(d.id)}">
+          <input name="name" placeholder="Item (ex.: Teste 1)" required maxlength="80" aria-label="Nome do item">
+          ${comps.length ? `<select name="component" aria-label="Componente">${compOptions(comps[0].id)}</select>` : ''}
+          <input name="value" type="number" inputmode="decimal" min="0" max="20" step="0.01" placeholder="0–20" required aria-label="Nota">
+          <button class="btn btn-primary">Adicionar</button>
+        </form>
+      </article>`;
+  }).join('');
+}
+
+const gradesBox = $('#grades-list');
+
+gradesBox.addEventListener('submit', e => {
+  const f = e.target.closest('.grade-form');
+  if (!f) return;
+  e.preventDefault();
+  const fd = new FormData(f);
+  const value = parseGrade(fd.get('value'));
+  if (value == null) { toast('A nota tem de estar entre 0 e 20.'); return; }
+  const d = findDisc(f.dataset.disc);
+  if (!d) return;
+  const hasComps = (d.components || []).length > 0;
+  state.grades.push({
+    id: uid(),
+    disciplineId: d.id,
+    componentId: hasComps ? (fd.get('component') || null) : null,
+    name: String(fd.get('name')).trim(),
+    value
+  });
+  save();
+  renderGrades();
+});
+
+gradesBox.addEventListener('change', e => {
+  const t = e.target;
+  if (t.classList.contains('grade-input')) {
+    const g = state.grades.find(x => x.id === t.dataset.id);
+    const value = parseGrade(t.value);
+    if (!g) return;
+    if (value == null) { toast('A nota tem de estar entre 0 e 20.'); renderGrades(); return; }
+    g.value = value;
+    save();
+    renderGrades();
+  } else if (t.classList.contains('grade-comp')) {
+    const g = state.grades.find(x => x.id === t.dataset.id);
+    if (!g) return;
+    g.componentId = t.value || null;
+    save();
+    renderGrades();
+  }
+});
+
+gradesBox.addEventListener('click', e => {
+  const b = e.target.closest('[data-action="del-grade"]');
+  if (!b) return;
+  if (!confirm('Apagar esta nota?')) return;
+  state.grades = state.grades.filter(g => g.id !== b.dataset.id);
+  save();
+  renderGrades();
+});
+
+/* ==========================================================
+   DEFINIÇÕES (datas do semestre, disciplinas, componentes)
+   ========================================================== */
+const settingsDialog = $('#settings-dialog');
+
+function renderSettings() {
+  const open = new Set($$('#settings-disciplines details[open]').map(d => d.dataset.disc));
+  const sem = state.semesters[state.currentSemester];
+  $('#settings-sem-name').textContent = sem.name;
+  $('#sem-start').value = sem.start || '';
+  $('#sem-end').value = sem.end || '';
+
+  $('#settings-disciplines').innerHTML = semDisciplines().map(d => `
+    <details class="disc-edit" data-disc="${esc(d.id)}"${open.has(d.id) ? ' open' : ''}>
+      <summary><span class="dot" style="--c:${isHex(d.color) ? d.color : DEFAULT_COLOR}"></span><span class="name">${esc(d.name)}</span></summary>
+      <div class="disc-edit-body">
+        <div class="row">
+          <input data-field="name" value="${esc(d.name)}" maxlength="80" aria-label="Nome da disciplina">
+          <input data-field="color" type="color" value="${isHex(d.color) ? d.color : DEFAULT_COLOR}" aria-label="Cor">
+        </div>
+        <h4>Componentes de avaliação <span class="muted">(opcional · sem componentes a média é simples · nome, peso %, nota mínima)</span></h4>
+        <div class="stack">
+          ${(d.components || []).map(c => `
+            <div class="comp-edit" data-comp="${esc(c.id)}">
+              <input data-cfield="name" value="${esc(c.name)}" maxlength="60" aria-label="Nome da componente">
+              <input data-cfield="weight" type="number" min="0" max="100" step="0.5" value="${c.weight}" aria-label="Peso (%)">
+              <input data-cfield="min" type="number" min="0" max="20" step="0.5" value="${c.min ?? ''}" placeholder="mín." aria-label="Nota mínima">
+              <button type="button" class="icon-btn danger" data-action="del-comp" aria-label="Remover componente">✕</button>
+            </div>`).join('')}
+        </div>
+        <form class="comp-add row">
+          <input name="name" placeholder="Nova componente" required maxlength="60" aria-label="Nova componente">
+          <input name="weight" type="number" min="0" max="100" step="0.5" placeholder="Peso %" required aria-label="Peso (%)">
+          <input name="min" type="number" min="0" max="20" step="0.5" placeholder="Mín." aria-label="Nota mínima">
+          <button class="btn">Adicionar</button>
+        </form>
+        <button type="button" class="btn btn-danger" data-action="del-disc">Remover disciplina</button>
+      </div>
+    </details>`).join('') || '<p class="muted">Sem disciplinas neste semestre.</p>';
+}
+
+$('#settings-btn').addEventListener('click', () => {
+  renderSettings();
+  if (typeof settingsDialog.showModal === 'function') settingsDialog.showModal();
+  else settingsDialog.setAttribute('open', '');
+});
+settingsDialog.addEventListener('click', e => { if (e.target === settingsDialog) settingsDialog.close(); });
+
+/* datas do semestre */
+['#sem-start', '#sem-end'].forEach(sel => {
+  $(sel).addEventListener('change', () => {
+    const start = $('#sem-start').value, end = $('#sem-end').value;
+    const sem = state.semesters[state.currentSemester];
+    if (!start || !end || start >= end) {
+      toast('A data de fim tem de ser depois da data de início.');
+      $('#sem-start').value = sem.start || '';
+      $('#sem-end').value = sem.end || '';
+      return;
+    }
+    sem.start = start; sem.end = end;
+    save();
+    renderAll();
+  });
+});
+
+/* editar nome/cor da disciplina e componentes */
+$('#settings-disciplines').addEventListener('change', e => {
+  const det = e.target.closest('.disc-edit');
+  if (!det) return;
+  const d = findDisc(det.dataset.disc);
+  if (!d) return;
+  const compEl = e.target.closest('.comp-edit');
+
+  if (compEl) {
+    const c = d.components.find(x => x.id === compEl.dataset.comp);
+    if (!c) return;
+    const f = e.target.dataset.cfield;
+    if (f === 'name') {
+      const v = e.target.value.trim();
+      if (!v) { e.target.value = c.name; return; }
+      c.name = v;
+    } else if (f === 'weight') {
+      const n = parseFloat(e.target.value);
+      if (!(n >= 0 && n <= 100)) { e.target.value = c.weight; toast('O peso tem de estar entre 0 e 100.'); return; }
+      c.weight = n;
+    } else if (f === 'min') {
+      const raw = e.target.value.trim();
+      if (raw === '') delete c.min;
+      else {
+        const n = parseFloat(raw);
+        if (!(n >= 0 && n <= 20)) { e.target.value = c.min ?? ''; toast('A nota mínima tem de estar entre 0 e 20.'); return; }
+        c.min = n;
+      }
+    }
+  } else {
+    const f = e.target.dataset.field;
+    if (f === 'name') {
+      const v = e.target.value.trim();
+      if (!v) { e.target.value = d.name; return; }
+      d.name = v;
+      $('summary .name', det).textContent = v;
+    } else if (f === 'color') {
+      d.color = e.target.value;
+      $('summary .dot', det).style.setProperty('--c', d.color);
+    }
+  }
+  save();
+  renderAll();
+});
+
+$('#settings-disciplines').addEventListener('submit', e => {
+  const f = e.target.closest('.comp-add');
+  if (!f) return;
+  e.preventDefault();
+  const d = findDisc(f.closest('.disc-edit').dataset.disc);
+  const fd = new FormData(f);
+  const weight = parseFloat(fd.get('weight'));
+  if (!d || !(weight >= 0 && weight <= 100)) { toast('O peso tem de estar entre 0 e 100.'); return; }
+  const comp = { id: uid(), name: String(fd.get('name')).trim(), weight };
+  const min = String(fd.get('min')).trim();
+  if (min !== '') {
+    const n = parseFloat(min);
+    if (!(n >= 0 && n <= 20)) { toast('A nota mínima tem de estar entre 0 e 20.'); return; }
+    comp.min = n;
+  }
+  d.components.push(comp);
+  save();
+  renderSettings();
+  renderAll();
+});
+
+$('#settings-disciplines').addEventListener('click', e => {
+  const det = e.target.closest('.disc-edit');
+  if (!det) return;
+  const d = findDisc(det.dataset.disc);
+  if (!d) return;
+
+  if (e.target.closest('[data-action="del-comp"]')) {
+    const id = e.target.closest('.comp-edit').dataset.comp;
+    if (!confirm('Remover esta componente? As notas ficam, mas sem componente.')) return;
+    d.components = d.components.filter(c => c.id !== id);
+    state.grades.forEach(g => { if (g.componentId === id) g.componentId = null; });
+    save(); renderSettings(); renderAll();
+  } else if (e.target.closest('[data-action="del-disc"]')) {
+    if (!confirm(`Remover «${d.name}» e todas as suas notas, eventos, links e aulas do horário? (As tarefas ficam, sem disciplina.)`)) return;
+    state.disciplines = state.disciplines.filter(x => x.id !== d.id);
+    state.grades = state.grades.filter(g => g.disciplineId !== d.id);
+    state.events = state.events.filter(ev => ev.disciplineId !== d.id);
+    state.links = state.links.filter(l => l.disciplineId !== d.id);
+    state.schedule = state.schedule.filter(s => s.disciplineId !== d.id);
+    state.tasks.forEach(t => { if (t.disciplineId === d.id) t.disciplineId = ''; });
+    save(); renderSettings(); renderAll();
+  }
+});
+
+$('#discipline-form').addEventListener('submit', e => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const name = String(fd.get('name')).trim();
+  if (!name) return;
+  state.disciplines.push({
+    id: uid(), semester: state.currentSemester, name,
+    color: isHex(fd.get('color')) ? fd.get('color') : DEFAULT_COLOR, components: []
+  });
+  e.target.reset();
+  save();
+  renderSettings();
+  renderAll();
+});
+
+/* ==========================================================
+   EXPORTAR / IMPORTAR (importar JUNTA ao que já existe)
+   ========================================================== */
+$('#export-btn').addEventListener('click', () => {
+  const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `estudo-backup-${toISO(new Date())}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  toast('Backup exportado.');
+});
+
+$('#import-btn').addEventListener('click', () => $('#import-input').click());
+
+$('#import-input').addEventListener('change', async e => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  try {
+    const data = JSON.parse(await file.text());
+    const added = mergeState(data);
+    save();
+    renderAll();
+    toast(added ? `Importado: ${added} novo(s) item(ns) juntado(s).` : 'Importado: não havia nada de novo para juntar.');
+  } catch (err) {
+    console.warn(err);
+    toast('Ficheiro inválido. Usa um backup exportado por esta app.');
+  }
+});
+
+const cleanComp = c => ({
+  id: c.id, name: c.name, weight: c.weight,
+  ...(Number.isFinite(c.min) ? { min: c.min } : {})
+});
+const validComp = c => c && typeof c.id === 'string' && typeof c.name === 'string' && Number.isFinite(c.weight);
+
+function mergeState(inc) {
+  if (!inc || typeof inc !== 'object' || !Array.isArray(inc.disciplines)) throw new Error('Formato inválido');
+  let added = 0;
+
+  // semestres que ainda não existem
+  if (inc.semesters && typeof inc.semesters === 'object') {
+    for (const [k, s] of Object.entries(inc.semesters)) {
+      if (!state.semesters[k] && s && typeof s.name === 'string') {
+        state.semesters[k] = { name: s.name, start: s.start || '', end: s.end || '' };
+      }
+    }
+  }
+
+  // disciplinas (novas) e componentes em falta nas existentes
+  inc.disciplines.forEach(d => {
+    if (!d || typeof d.id !== 'string' || typeof d.name !== 'string' || !state.semesters[d.semester]) return;
+    const comps = (Array.isArray(d.components) ? d.components : []).filter(validComp);
+    const cur = findDisc(d.id);
+    if (!cur) {
+      state.disciplines.push({
+        id: d.id, semester: d.semester, name: d.name,
+        color: isHex(d.color) ? d.color : DEFAULT_COLOR,
+        components: comps.map(cleanComp)
+      });
+      added++;
+    } else {
+      const ids = new Set(cur.components.map(c => c.id));
+      comps.forEach(c => { if (!ids.has(c.id)) { cur.components.push(cleanComp(c)); ids.add(c.id); added++; } });
+    }
+  });
+
+  // restantes listas: acrescenta só o que tem id novo
+  const discIds = new Set(state.disciplines.map(d => d.id));
+  const isDate = s => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s);
+  const rules = {
+    grades: g => typeof g.name === 'string' && Number.isFinite(g.value) && g.value >= 0 && g.value <= 20 && discIds.has(g.disciplineId),
+    events: ev => typeof ev.title === 'string' && isDate(ev.date) && discIds.has(ev.disciplineId) &&
+      EVENT_TYPES.includes(ev.type) && (!ev.time || /^\d{2}:\d{2}$/.test(ev.time)),
+    tasks: t => typeof t.title === 'string',
+    links: l => typeof l.name === 'string' && typeof l.url === 'string' && /^https?:\/\//i.test(l.url) &&
+      discIds.has(l.disciplineId) && ['aulas', 'series', 'resumos'].includes(l.category),
+    schedule: s => !!cleanSched(s) && (!s.disciplineId || discIds.has(s.disciplineId))
+  };
+  for (const [k, ok] of Object.entries(rules)) {
+    if (!Array.isArray(inc[k])) continue;
+    const ids = new Set(state[k].map(x => x.id));
+    inc[k].forEach(x => {
+      if (x && typeof x === 'object' && typeof x.id === 'string' && !ids.has(x.id) && ok(x)) {
+        const item = k === 'tasks' ? normalizeTask(x) : k === 'schedule' ? cleanSched(x) : x;
+        if (item) { state[k].push(item); ids.add(x.id); added++; }
+      }
+    });
+  }
+
+  // notas ligadas a componentes que não existem ficam sem componente
+  state.grades.forEach(g => {
+    const d = findDisc(g.disciplineId);
+    if (g.componentId && !(d && d.components.some(c => c.id === g.componentId))) g.componentId = null;
+  });
+  return added;
+}
+
+/* ==========================================================
+   AUXILIARES DE DATAS E DISCIPLINAS
+   ========================================================== */
+const parseISO = s => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
+const todayISO = () => toISO(new Date());
+const addDays = (iso, n) => { const d = parseISO(iso); d.setDate(d.getDate() + n); return toISO(d); };
+const daysBetween = (a, b) => Math.round((parseISO(b) - parseISO(a)) / 864e5);
+const fmtDate = iso => { const [y, m, d] = iso.split('-'); return `${d}/${m}/${y}`; };
+const longDate = iso => parseISO(iso).toLocaleDateString('pt-PT', { weekday: 'long', day: 'numeric', month: 'long' });
+// sem hora definida, o evento conta até ao fim desse dia
+const eventDateTime = ev => {
+  const [y, m, d] = ev.date.split('-').map(Number);
+  const [hh, mm] = (ev.time || '23:59').split(':').map(Number);
+  return new Date(y, m - 1, d, hh, mm);
+};
+const discColor = id => { const d = findDisc(id); return d && isHex(d.color) ? d.color : 'var(--muted)'; };
+const discName = id => { const d = findDisc(id); return d ? d.name : ''; };
+const EVENT_TYPES = ['teste', 'ficha', 'tarefa'];
+const typeLabel = t => ({ ficha: 'Ficha', tarefa: 'Tarefa' }[t] || 'Teste');
+
+function openDialog(dlg) {
+  if (typeof dlg.showModal === 'function') dlg.showModal(); else dlg.setAttribute('open', '');
+}
+
+function fillDisciplineSelect(sel, { empty = false } = {}) {
+  const cur = sel.value;
+  sel.innerHTML = (empty ? '<option value="">— sem disciplina —</option>' : '') +
+    semDisciplines().map(d => `<option value="${esc(d.id)}">${esc(d.name)}</option>`).join('');
+  if ([...sel.options].some(o => o.value === cur)) sel.value = cur;
+}
+
+/* ==========================================================
+   DASHBOARD (contagem decrescente + progresso do semestre)
+   ========================================================== */
+function renderDashboard() {
+  const now = new Date();
+
+  // próximo "Teste" do semestre selecionado
+  const discIds = new Set(semDisciplines().map(d => d.id));
+  const upcoming = state.events
+    .filter(ev => ev.type === 'teste' && discIds.has(ev.disciplineId))
+    .map(ev => ({ ev, at: eventDateTime(ev) }))
+    .filter(x => x.at >= now)
+    .sort((a, b) => a.at - b.at);
+  const next = upcoming[0];
+
+  // o teste a seguir: versão pequena, só com os dias que faltam
+  const after = upcoming[1];
+  $('#next-test').hidden = !after;
+  if (after) {
+    const days = daysBetween(todayISO(), after.ev.date);
+    $('#next-test').style.setProperty('--c', discColor(after.ev.disciplineId));
+    $('#next-test-title').textContent = `${after.ev.title} · ${discName(after.ev.disciplineId)}`;
+    $('#next-test-days').textContent = days === 0 ? 'hoje' : days === 1 ? 'amanhã' : `faltam ${days} dias`;
+  }
+
+  if (next) {
+    const diff = next.at - now;
+    $('#countdown-title').textContent = `${next.ev.title} · ${discName(next.ev.disciplineId)}`;
+    $('#countdown-sub').textContent = longDate(next.ev.date) + (next.ev.time ? ` às ${next.ev.time}` : '');
+    $('#cd-days').textContent = Math.floor(diff / 864e5);
+    $('#cd-hours').textContent = Math.floor((diff % 864e5) / 36e5);
+    $('#cd-mins').textContent = Math.floor((diff % 36e5) / 6e4);
+  } else {
+    $('#countdown-title').textContent = 'Sem testes marcados';
+    $('#countdown-sub').textContent = 'Adiciona um evento do tipo Teste no calendário.';
+    ['#cd-days', '#cd-hours', '#cd-mins'].forEach(s => { $(s).textContent = '–'; });
+  }
+
+  // progresso do semestre (o dia de fim conta como dia inteiro)
+  const sem = state.semesters[state.currentSemester];
+  let pct = 0, label = '–', text = 'Define as datas do semestre em ⚙ Definições.';
+  if (sem && sem.start && sem.end) {
+    const start = parseISO(sem.start), end = parseISO(addDays(sem.end, 1));
+    pct = Math.min(100, Math.max(0, ((now - start) / (end - start)) * 100));
+    const left = Math.max(0, Math.ceil((end - now) / 864e5));
+    if (now < start) text = `O ${sem.name} começa a ${fmtDate(sem.start)}.`;
+    else if (now >= end) text = `O ${sem.name} terminou a ${fmtDate(sem.end)}.`;
+    else text = `Faltam ${left} ${left === 1 ? 'dia' : 'dias'} · de ${fmtDate(sem.start)} a ${fmtDate(sem.end)}.`;
+    label = `${Math.round(pct)}%`;
+  }
+  $('#progress-pct').textContent = label;
+  $('#progress-bar').style.width = `${pct}%`;
+  $('#progress').setAttribute('aria-valuenow', String(Math.round(pct)));
+  $('#progress-text').textContent = text;
+}
+
+/* ==========================================================
+   CALENDÁRIO
+   ========================================================== */
+let calYear = new Date().getFullYear();
+let calMonth = new Date().getMonth();
+let calSelected = todayISO();
+
+const semEvents = () => {
+  const ids = new Set(semDisciplines().map(d => d.id));
+  return state.events.filter(ev => ids.has(ev.disciplineId));
+};
+const sortEvents = (a, b) => (a.time || '').localeCompare(b.time || '') || a.title.localeCompare(b.title);
+
+function goToDate(iso) {
+  const d = parseISO(iso);
+  calSelected = iso; calYear = d.getFullYear(); calMonth = d.getMonth();
+}
+
+const taskColor = t => (t.disciplineId ? discColor(t.disciplineId) : 'var(--muted)');
+
+// tarefas com início e fim, por dia (as "Sem prazo" e as de um só dia não vão para o calendário)
+function rangeTasksByDate() {
+  const ids = new Set(semDisciplines().map(d => d.id));
+  const map = {};
+  state.tasks.forEach(t => {
+    if (!t.start || !t.end) return;
+    if (t.disciplineId && !ids.has(t.disciplineId)) return;
+    let d = t.start, guard = 0;
+    while (d <= t.end && guard++ < 400) { (map[d] = map[d] || []).push(t); d = addDays(d, 1); }
+  });
+  return map;
+}
+
+function renderCalendar() {
+  $('#cal-title').textContent = new Date(calYear, calMonth, 1).toLocaleDateString('pt-PT', { month: 'long', year: 'numeric' });
+
+  const byDate = {};
+  semEvents().forEach(ev => { (byDate[ev.date] = byDate[ev.date] || []).push(ev); });
+  const tByDate = rangeTasksByDate();
+
+  const first = new Date(calYear, calMonth, 1);
+  const start = new Date(calYear, calMonth, 1 - ((first.getDay() + 6) % 7)); // semana começa à segunda
+  const today = todayISO();
+  let html = '';
+  for (let i = 0; i < 42; i++) {
+    const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+    const iso = toISO(d);
+    const evs = (byDate[iso] || []).sort(sortEvents);
+    const tks = tByDate[iso] || [];
+    const total = evs.length + tks.length;
+    const taskChip = t => `<span class="cal-chip ctask${t.done ? ' done' : ''}" style="--c:${taskColor(t)}">${esc((t.done ? '☑ ' : '☐ ') + t.title)}</span>`;
+    html += `
+      <button type="button" class="cal-cell${d.getMonth() !== calMonth ? ' other' : ''}${iso === today ? ' today' : ''}${iso === calSelected ? ' selected' : ''}"
+              data-date="${iso}" aria-label="${esc(longDate(iso))}${total ? `, ${total} item(ns)` : ''}">
+        <span class="cal-num">${d.getDate()}</span>
+        <span class="cal-dots">${evs.slice(0, 4).map(ev => `<span class="cal-dot ${ev.type}" style="--c:${discColor(ev.disciplineId)}"></span>`).join('')}${tks.slice(0, Math.max(0, 4 - evs.length)).map(t => `<span class="cal-dot ctask" style="--c:${taskColor(t)}"></span>`).join('')}</span>
+        ${evs.slice(0, 3).map(ev => `<span class="cal-chip ${ev.type}${ev.done ? ' done' : ''}" style="--c:${discColor(ev.disciplineId)}">${esc(ev.time ? ev.time + ' ' : '')}${esc(ev.title)}</span>`).join('')}${tks.slice(0, Math.max(0, 3 - evs.length)).map(taskChip).join('')}
+        ${total > 3 ? `<span class="cal-chip-more">+${total - 3}</span>` : ''}
+      </button>`;
+  }
+  $('#cal-grid').innerHTML = html;
+
+  $('#cal-legend').innerHTML = semDisciplines()
+    .map(d => `<span><i class="dot" style="--c:${isHex(d.color) ? d.color : DEFAULT_COLOR}"></i>${esc(d.name)}</span>`).join('');
+
+  // eventos e tarefas do dia selecionado
+  $('#cal-selected-title').textContent = `Eventos · ${longDate(calSelected)}`;
+  const dayEvs = (byDate[calSelected] || []).sort(sortEvents);
+  const dayTasks = tByDate[calSelected] || [];
+  $('#cal-day-events').innerHTML = (dayEvs.length || dayTasks.length)
+    ? dayEvs.map(ev => `
+    <li class="event-item${ev.done ? ' is-done' : ''}" style="--c:${discColor(ev.disciplineId)}">
+      <input type="checkbox" data-action="toggle-event" data-id="${esc(ev.id)}"${ev.done ? ' checked' : ''} aria-label="Concluído: ${esc(ev.title)}">
+      <div class="grow">
+        <div class="title">${esc(ev.title)}</div>
+        <div class="muted">${ev.time ? esc(ev.time) + ' · ' : ''}${esc(discName(ev.disciplineId))}</div>
+      </div>
+      <span class="type-badge">${typeLabel(ev.type)}</span>
+      <button type="button" class="icon-btn" data-action="edit-event" data-id="${esc(ev.id)}" aria-label="Editar ${esc(ev.title)}">✎</button>
+      <button type="button" class="icon-btn danger" data-action="del-event" data-id="${esc(ev.id)}" aria-label="Apagar ${esc(ev.title)}">✕</button>
+    </li>`).join('') + dayTasks.map(t => `
+    <li class="event-item${t.done ? ' is-done' : ''}" style="--c:${taskColor(t)}">
+      <input type="checkbox" data-action="toggle-task" data-id="${esc(t.id)}"${t.done ? ' checked' : ''} aria-label="Concluída: ${esc(t.title)}">
+      <div class="grow">
+        <div class="title">${esc(t.title)}</div>
+        <div class="muted">${fmtDate(t.start)} → ${fmtDate(t.end)}${t.disciplineId && findDisc(t.disciplineId) ? ' · ' + esc(discName(t.disciplineId)) : ''}</div>
+      </div>
+      <span class="type-badge">Tarefa</span>
+      <button type="button" class="icon-btn" data-action="edit-task" data-id="${esc(t.id)}" aria-label="Editar ${esc(t.title)}">✎</button>
+      <button type="button" class="icon-btn danger" data-action="del-task" data-id="${esc(t.id)}" aria-label="Apagar ${esc(t.title)}">✕</button>
+    </li>`).join('')
+    : '<li class="muted">Sem eventos neste dia.</li>';
+}
+
+$('#cal-prev').addEventListener('click', () => {
+  calMonth--; if (calMonth < 0) { calMonth = 11; calYear--; }
+  renderCalendar();
+});
+$('#cal-next').addEventListener('click', () => {
+  calMonth++; if (calMonth > 11) { calMonth = 0; calYear++; }
+  renderCalendar();
+});
+$('#cal-today').addEventListener('click', () => { goToDate(todayISO()); renderCalendar(); });
+$('#cal-grid').addEventListener('click', e => {
+  const c = e.target.closest('.cal-cell');
+  if (!c) return;
+  goToDate(c.dataset.date);
+  renderCalendar();
+});
+
+/* --- diálogo de evento (criar / editar / apagar) --- */
+const eventDialog = $('#event-dialog');
+const eventForm = $('#event-form');
+
+function openEventDialog(ev) {
+  if (!semDisciplines().length) { toast('Cria primeiro uma disciplina em ⚙ Definições.'); return; }
+  fillDisciplineSelect(eventForm.elements['discipline']);
+  eventForm.reset();
+  $('#event-dialog-title').textContent = ev ? 'Editar evento' : 'Novo evento';
+  $('#event-delete').hidden = !ev;
+  eventForm.elements['eventId'].value = ev ? ev.id : '';
+  eventForm.elements['title'].value = ev ? ev.title : '';
+  eventForm.elements['date'].value = ev ? ev.date : calSelected;
+  eventForm.elements['time'].value = ev ? (ev.time || '') : '';
+  eventForm.elements['type'].value = ev ? ev.type : 'teste';
+  if (ev && findDisc(ev.disciplineId)) eventForm.elements['discipline'].value = ev.disciplineId;
+  openDialog(eventDialog);
+}
+
+$('#cal-add').addEventListener('click', () => openEventDialog(null));
+$('#event-cancel').addEventListener('click', () => eventDialog.close());
+eventDialog.addEventListener('click', e => { if (e.target === eventDialog) eventDialog.close(); });
+
+eventForm.addEventListener('submit', e => {
+  e.preventDefault();
+  const fd = new FormData(eventForm);
+  const title = String(fd.get('title')).trim();
+  const date = String(fd.get('date'));
+  const discId = String(fd.get('discipline'));
+  if (!title || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !findDisc(discId)) { toast('Preenche o título, a data e a disciplina.'); return; }
+  const rec = { title, date, time: String(fd.get('time') || ''), disciplineId: discId, type: EVENT_TYPES.includes(fd.get('type')) ? String(fd.get('type')) : 'teste' };
+  const id = String(fd.get('eventId') || '');
+  const existing = id ? state.events.find(x => x.id === id) : null;
+  if (existing) Object.assign(existing, rec);
+  else state.events.push({ id: uid(), ...rec });
+  save();
+  eventDialog.close();
+  goToDate(date);
+  renderAll();
+});
+
+$('#event-delete').addEventListener('click', () => {
+  const id = eventForm.elements['eventId'].value;
+  if (!id || !confirm('Apagar este evento?')) return;
+  state.events = state.events.filter(ev => ev.id !== id);
+  save();
+  eventDialog.close();
+  renderAll();
+});
+
+$('#cal-day-events').addEventListener('change', e => {
+  const cb = e.target;
+  if (cb.dataset.action === 'toggle-event') {
+    const ev = state.events.find(x => x.id === cb.dataset.id);
+    if (!ev) return;
+    if (cb.checked) ev.done = true; else delete ev.done;
+  } else if (cb.dataset.action === 'toggle-task') {
+    const t = state.tasks.find(x => x.id === cb.dataset.id);
+    if (!t) return;
+    setTaskDone(t, cb.checked);
+  } else return;
+  save();
+  renderAll();
+});
+
+$('#cal-day-events').addEventListener('click', e => {
+  const edit = e.target.closest('[data-action="edit-event"]');
+  const del = e.target.closest('[data-action="del-event"]');
+  const editT = e.target.closest('[data-action="edit-task"]');
+  const delT = e.target.closest('[data-action="del-task"]');
+  if (editT) { openTaskDialog(state.tasks.find(t => t.id === editT.dataset.id)); return; }
+  if (delT) {
+    if (!confirm('Apagar esta tarefa?')) return;
+    state.tasks = state.tasks.filter(t => t.id !== delT.dataset.id);
+    save(); renderAll(); return;
+  }
+  if (edit) {
+    const ev = state.events.find(x => x.id === edit.dataset.id);
+    if (ev) openEventDialog(ev);
+  } else if (del) {
+    if (!confirm('Apagar este evento?')) return;
+    state.events = state.events.filter(ev => ev.id !== del.dataset.id);
+    save();
+    renderAll();
+  }
+});
+
+/* ==========================================================
+   CHECKLIST DIÁRIO (Ontem / Hoje / Amanhã)
+   - Tarefa com dia: aparece nesse dia; se ficar por fazer, passa
+     para "Hoje" com aviso a vermelho.
+   - Tarefa com início e fim: aparece em todos os dias do intervalo
+     (e também no calendário).
+   - Tarefa "Sem prazo": lista à parte, nunca fica atrasada.
+   ========================================================== */
+let dayOffset = 0;
+const viewDay = () => addDays(todayISO(), dayOffset);
+const isRange = t => !!(t.start && t.end);
+const isBacklog = t => !isRange(t) && !t.date;
+const dueDate = t => (isRange(t) ? t.end : t.date);
+const isLate = t => !t.done && !!dueDate(t) && dueDate(t) < todayISO();
+const coversDay = (t, day) => (isRange(t) ? t.start <= day && day <= t.end : t.date === day);
+
+function tasksForView() {
+  const day = viewDay(), today = todayISO();
+  let list = state.tasks.filter(t => !isBacklog(t) && coversDay(t, day));
+  if (dayOffset === 0) {
+    // atrasadas por fazer + as concluídas hoje (para não desaparecerem ao marcar)
+    list = list.concat(state.tasks.filter(t =>
+      !isBacklog(t) && !coversDay(t, day) && dueDate(t) < today && (!t.done || t.doneDate === today)));
+  }
+  const rank = t => (isLate(t) ? 0 : t.done ? 2 : 1);
+  return list.sort((a, b) => rank(a) - rank(b) || dueDate(a).localeCompare(dueDate(b)));
+}
+
+function taskItem(t) {
+  const late = isLate(t);
+  const n = late ? daysBetween(dueDate(t), todayISO()) : 0;
+  const bits = [];
+  if (t.disciplineId && findDisc(t.disciplineId)) bits.push(esc(discName(t.disciplineId)));
+  if (isRange(t)) bits.push(`${fmtDate(t.start)} → ${fmtDate(t.end)}`);
+  if (t.note) bits.push(esc(t.note));
+  if (late) bits.push(`<span class="badge-late">Atrasada desde ${n} ${n === 1 ? 'dia' : 'dias'}</span>`);
+  return `
+    <li class="task${t.done ? ' done' : ''}" style="--c:${t.disciplineId ? discColor(t.disciplineId) : 'var(--border)'}">
+      <input type="checkbox" data-id="${esc(t.id)}"${t.done ? ' checked' : ''} aria-label="Concluir: ${esc(t.title)}">
+      <div class="grow">
+        <span class="title">${esc(t.title)}</span>
+        ${bits.length ? `<small>${bits.join(' · ')}</small>` : ''}
+      </div>
+      <button type="button" class="icon-btn" data-action="edit-task" data-id="${esc(t.id)}" aria-label="Editar ${esc(t.title)}">✎</button>
+      <button type="button" class="icon-btn danger" data-action="del-task" data-id="${esc(t.id)}" aria-label="Apagar ${esc(t.title)}">✕</button>
+    </li>`;
+}
+
+function setTaskDone(t, done) {
+  t.done = done;
+  if (done) t.doneDate = todayISO(); else delete t.doneDate;
+}
+
+function renderChecklist() {
+  const labels = { '-1': 'Ontem', '0': 'Hoje', '1': 'Amanhã' };
+  $$('#day-nav .btn').forEach(b => b.classList.toggle('active', Number(b.dataset.offset) === dayOffset));
+  $('#checklist-date').textContent = `${labels[dayOffset]} · ${longDate(viewDay())}`;
+  fillDisciplineSelect($('#task-form [name="discipline"]'), { empty: true });
+
+  const list = tasksForView();
+  $('#task-list').innerHTML = list.length ? list.map(taskItem).join('') : '<li class="muted">Sem tarefas para este dia.</li>';
+
+  const bl = state.tasks.filter(isBacklog).sort((a, b) => Number(a.done) - Number(b.done));
+  const open = bl.filter(t => !t.done).length;
+  $('#backlog').innerHTML = bl.length ? `
+    <h3 class="backlog-title">Sem prazo · ${open} por fazer</h3>
+    <p class="muted">Para fazer quando quiseres — não ficam atrasadas.</p>
+    <ul class="list">${bl.map(taskItem).join('')}</ul>` : '';
+}
+
+$('#day-nav').addEventListener('click', e => {
+  const b = e.target.closest('[data-offset]');
+  if (!b) return;
+  dayOffset = Number(b.dataset.offset);
+  renderChecklist();
+});
+
+const taskForm = $('#task-form');
+taskForm.elements['mode'].addEventListener('change', e => {
+  const range = e.target.value === 'range';
+  $('#task-range').hidden = !range;
+  if (range) {
+    if (!taskForm.elements['start'].value) taskForm.elements['start'].value = viewDay();
+    if (!taskForm.elements['end'].value) taskForm.elements['end'].value = viewDay();
+  }
+});
+
+taskForm.addEventListener('submit', e => {
+  e.preventDefault();
+  const fd = new FormData(taskForm);
+  const title = String(fd.get('title')).trim();
+  if (!title) return;
+  const discId = String(fd.get('discipline') || '');
+  const task = { id: uid(), title, disciplineId: findDisc(discId) ? discId : '', done: false, date: '' };
+  const mode = String(fd.get('mode') || 'day');
+  if (mode === 'day') task.date = viewDay();
+  else if (mode === 'range') {
+    const start = String(fd.get('start')), end = String(fd.get('end'));
+    if (!isISODate(start) || !isISODate(end) || start > end) { toast('Escolhe um início e um fim (o fim não pode ser antes do início).'); return; }
+    task.start = start; task.end = end;
+  }
+  state.tasks.push(task);
+  save();
+  const input = taskForm.elements['title'];
+  input.value = '';
+  input.focus();
+  renderChecklist();
+  if (mode === 'range') renderCalendar();
+});
+
+['#task-list', '#backlog'].forEach(sel => {
+  $(sel).addEventListener('change', e => {
+    if (e.target.type !== 'checkbox') return;
+    const t = state.tasks.find(x => x.id === e.target.dataset.id);
+    if (!t) return;
+    setTaskDone(t, e.target.checked);
+    save();
+    renderChecklist();
+    renderCalendar();
+  });
+  $(sel).addEventListener('click', e => {
+    const ed = e.target.closest('[data-action="edit-task"]');
+    if (ed) { openTaskDialog(state.tasks.find(t => t.id === ed.dataset.id)); return; }
+    const b = e.target.closest('[data-action="del-task"]');
+    if (!b) return;
+    if (!confirm('Apagar esta tarefa?')) return;
+    state.tasks = state.tasks.filter(t => t.id !== b.dataset.id);
+    save();
+    renderChecklist();
+    renderCalendar();
+  });
+});
+
+/* ==========================================================
+   TAREFAS DIÁRIAS (Ontem · Hoje · Amanhã lado a lado + próximos dias)
+   ========================================================== */
+const DAILY_COLS = [[-1, 'Ontem'], [0, 'Hoje'], [1, 'Amanhã']];
+
+function dailyTasksFor(day) {
+  const rank = t => (t.done ? 1 : 0);
+  return state.tasks.filter(t => !isBacklog(t) && coversDay(t, day))
+    .sort((a, b) => rank(a) - rank(b) || a.title.localeCompare(b.title));
+}
+
+function renderDaily() {
+  const today = todayISO();
+  $('#daily-cols').innerHTML = DAILY_COLS.map(([off, label]) => {
+    const day = addDays(today, off);
+    const list = dailyTasksFor(day);
+    const done = list.filter(t => t.done).length;
+    // ontem: avisa o que ficou por fazer
+    const late = off === -1 ? list.filter(t => !t.done).length : 0;
+    return `
+      <section class="card daily-col${off === 0 ? ' is-today' : ''}">
+        <div class="between">
+          <h2>${label}</h2>
+          <span class="muted small">${list.length ? `${done}/${list.length}` : ''}</span>
+        </div>
+        <p class="muted small daily-date">${esc(longDate(day))}${late ? ` · <span class="badge-late">${late} por fazer</span>` : ''}</p>
+        ${list.length ? `<div class="mini-progress"><span style="width:${Math.round(done / list.length * 100)}%"></span></div>` : ''}
+        <ul class="list">${list.length ? list.map(taskItem).join('') : '<li class="muted">Sem tarefas.</li>'}</ul>
+        <form class="daily-add" data-day="${day}">
+          <input name="title" placeholder="+ Tarefa para ${label.toLowerCase()}" required maxlength="120" aria-label="Nova tarefa para ${label}">
+        </form>
+      </section>`;
+  }).join('');
+
+  // próximos dias (depois de amanhã, 2 semanas)
+  const rows = [];
+  for (let i = 2; i <= 15; i++) {
+    const day = addDays(today, i);
+    const list = state.tasks.filter(t => !isBacklog(t) && !isRange(t) && t.date === day);
+    if (list.length) rows.push(`
+      <li class="upcoming-day">
+        <div class="upcoming-date"><strong>${esc(parseISO(day).toLocaleDateString('pt-PT', { weekday: 'short', day: 'numeric' }))}</strong></div>
+        <ul class="list">${list.map(taskItem).join('')}</ul>
+      </li>`);
+  }
+  $('#daily-upcoming').innerHTML = rows.join('') || '<li class="muted">Nada marcado para os próximos dias.</li>';
+}
+
+$('#tab-daily').addEventListener('submit', e => {
+  const f = e.target.closest('.daily-add');
+  if (!f) return;
+  e.preventDefault();
+  const title = String(new FormData(f).get('title')).trim();
+  if (!title) return;
+  state.tasks.push({ id: uid(), title, date: f.dataset.day, disciplineId: '', done: false });
+  save();
+  renderAll();
+  const again = $(`#tab-daily .daily-add[data-day="${f.dataset.day}"] input`);
+  if (again) again.focus();
+});
+$('#tab-daily').addEventListener('change', e => {
+  if (e.target.type !== 'checkbox') return;
+  const t = state.tasks.find(x => x.id === e.target.dataset.id);
+  if (!t) return;
+  setTaskDone(t, e.target.checked);
+  save();
+  renderAll();
+});
+$('#tab-daily').addEventListener('click', e => {
+  const ed = e.target.closest('[data-action="edit-task"]');
+  if (ed) { openTaskDialog(state.tasks.find(t => t.id === ed.dataset.id)); return; }
+  const b = e.target.closest('[data-action="del-task"]');
+  if (!b || !confirm('Apagar esta tarefa?')) return;
+  state.tasks = state.tasks.filter(t => t.id !== b.dataset.id);
+  save();
+  renderAll();
+});
+
+/* --- diálogo de tarefa (editar / concluir / apagar) --- */
+const taskDialog = $('#task-dialog');
+const taskEditForm = $('#task-edit-form');
+
+function openTaskDialog(t) {
+  if (!t) return;
+  const f = taskEditForm.elements;
+  fillDisciplineSelect(f['discipline'], { empty: true });
+  f['taskId'].value = t.id;
+  f['title'].value = t.title;
+  f['discipline'].value = t.disciplineId && findDisc(t.disciplineId) ? t.disciplineId : '';
+  f['start'].value = isRange(t) ? t.start : (t.date || '');
+  f['end'].value = isRange(t) ? t.end : '';
+  f['done'].checked = !!t.done;
+  f['note'].value = t.note || '';
+  openDialog(taskDialog);
+}
+
+$('#task-cancel').addEventListener('click', () => taskDialog.close());
+taskDialog.addEventListener('click', e => { if (e.target === taskDialog) taskDialog.close(); });
+
+taskEditForm.addEventListener('submit', e => {
+  e.preventDefault();
+  const fd = new FormData(taskEditForm);
+  const t = state.tasks.find(x => x.id === fd.get('taskId'));
+  if (!t) return;
+  const title = String(fd.get('title')).trim();
+  const start = String(fd.get('start') || ''), end = String(fd.get('end') || '');
+  if (!title) { toast('A tarefa precisa de um título.'); return; }
+  if (end && !start) { toast('Para ter fim, a tarefa precisa de início.'); return; }
+  if (start && end && end < start) { toast('O fim não pode ser antes do início.'); return; }
+  const discId = String(fd.get('discipline') || '');
+  t.title = title;
+  const note = String(fd.get('note') || '').trim();
+  if (note) t.note = note; else delete t.note;
+  t.disciplineId = findDisc(discId) ? discId : '';
+  delete t.start; delete t.end; t.date = '';
+  if (start && end) { t.start = start; t.end = end; } else t.date = start;
+  if (!!fd.get('done') !== !!t.done) setTaskDone(t, !!fd.get('done'));
+  save();
+  taskDialog.close();
+  renderAll();
+});
+
+$('#task-delete').addEventListener('click', () => {
+  const id = taskEditForm.elements['taskId'].value;
+  if (!id || !confirm('Apagar esta tarefa?')) return;
+  state.tasks = state.tasks.filter(t => t.id !== id);
+  save();
+  taskDialog.close();
+  renderAll();
+});
+
+/* ==========================================================
+   REPOSITÓRIO DE FICHEIROS (só links: Drive, Dropbox, …)
+   Cada disciplina é uma secção que se recolhe/expande; a escolha
+   fica lembrada neste aparelho.
+   ========================================================== */
+const CATS = [['aulas', 'Aulas'], ['series', 'Séries'], ['resumos', 'Resumos']];
+const hostOf = url => { try { return new URL(url).hostname.replace(/^www\./, ''); } catch (e) { return ''; } };
+
+const UI_KEY = 'estudo-ela-ui-v1';
+let ui = {};
+try { ui = JSON.parse(localStorage.getItem(UI_KEY)) || {}; } catch (e) { ui = {}; }
+if (!ui.collapsed || typeof ui.collapsed !== 'object') ui.collapsed = {};
+const saveUI = () => { try { localStorage.setItem(UI_KEY, JSON.stringify(ui)); } catch (e) {} };
+
+function renderFiles() {
+  fillDisciplineSelect($('#link-form [name="discipline"]'));
+  const box = $('#files-list');
+  const discs = semDisciplines();
+  if (!discs.length) {
+    box.innerHTML = '<div class="card empty">Ainda não há disciplinas neste semestre. Adiciona-as em ⚙ Definições.</div>';
+    return;
+  }
+  box.innerHTML = discs.map(d => {
+    const links = state.links.filter(l => l.disciplineId === d.id);
+    const n = links.length;
+    const groups = CATS.map(([key, label]) => {
+      const ls = links.filter(l => l.category === key);
+      if (!ls.length) return '';
+      return `<h4 class="file-cat">${label}</h4>
+        <div class="stack">${ls.map(l => `
+          <div class="file-link">
+            <a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${esc(l.name)}</a>
+            <span class="muted">${esc(hostOf(l.url))}</span>
+            <button type="button" class="icon-btn danger" data-action="del-link" data-id="${esc(l.id)}" aria-label="Apagar ${esc(l.name)}">✕</button>
+          </div>`).join('')}</div>`;
+    }).join('');
+    return `
+      <details class="card file-group" data-disc="${esc(d.id)}"${ui.collapsed[d.id] ? '' : ' open'} style="--c:${isHex(d.color) ? d.color : DEFAULT_COLOR}">
+        <summary>
+          <span class="dot"></span>
+          <h2>${esc(d.name)}</h2>
+          <span class="muted file-count">${n} ${n === 1 ? 'ficheiro' : 'ficheiros'}</span>
+          <span class="chevron" aria-hidden="true">▾</span>
+        </summary>
+        <div class="file-body">${groups || '<p class="muted">Ainda sem links.</p>'}</div>
+      </details>`;
+  }).join('');
+}
+
+// o evento "toggle" não sobe na árvore: apanha-se na fase de captura
+$('#files-list').addEventListener('toggle', e => {
+  const det = e.target && e.target.closest ? e.target.closest('details.file-group') : null;
+  if (!det) return;
+  if (det.open) delete ui.collapsed[det.dataset.disc]; else ui.collapsed[det.dataset.disc] = true;
+  saveUI();
+}, true);
+
+$('#link-form').addEventListener('submit', e => {
+  e.preventDefault();
+  const f = e.target;
+  const fd = new FormData(f);
+  const discId = String(fd.get('discipline'));
+  const category = String(fd.get('category'));
+  const name = String(fd.get('name')).trim();
+  let url = String(fd.get('url')).trim();
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Error('protocolo');
+    url = u.href;
+  } catch (err) { toast('O link tem de começar por http:// ou https://'); return; }
+  if (!name || !findDisc(discId) || !CATS.some(c => c[0] === category)) { toast('Preenche a disciplina, a categoria e o nome.'); return; }
+  state.links.push({ id: uid(), disciplineId: discId, category, name, url });
+  save();
+  f.querySelector('[name="name"]').value = '';
+  f.querySelector('[name="url"]').value = '';
+  renderFiles();
+});
+
+$('#files-list').addEventListener('click', e => {
+  const b = e.target.closest('[data-action="del-link"]');
+  if (!b) return;
+  if (!confirm('Apagar este link?')) return;
+  state.links = state.links.filter(l => l.id !== b.dataset.id);
+  save();
+  renderFiles();
+});
+
+/* ==========================================================
+   HORÁRIO SEMANAL (aulas e outros compromissos fixos de cada semana)
+   - Cada entrada: dia da semana, hora de início e de fim, e disciplina
+     e/ou nome. Sem disciplina, aparece em todos os semestres.
+   - As horas editam-se diretamente na lista.
+   ========================================================== */
+const WEEKDAYS = ['Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado', 'Domingo'];
+const todayWeekday = () => ((new Date().getDay() + 6) % 7) + 1; // 1 = segunda … 7 = domingo
+const schedLabel = s => s.title || discName(s.disciplineId) || 'Sem nome';
+
+function renderSchedule() {
+  fillDisciplineSelect($('#schedule-form [name="discipline"]'), { empty: true });
+  const ids = new Set(semDisciplines().map(d => d.id));
+  const items = state.schedule.filter(s => !s.disciplineId || ids.has(s.disciplineId));
+  const today = todayWeekday();
+  const days = WEEKDAYS.map((name, i) => ({
+    n: i + 1, name,
+    list: items.filter(s => s.day === i + 1).sort((a, b) => a.start.localeCompare(b.start) || a.end.localeCompare(b.end))
+  })).filter(d => d.n <= 5 || d.list.length); // sábado e domingo só aparecem se tiverem algo
+
+  $('#schedule-list').innerHTML = days.map(d => `
+    <section class="card sched-day${d.n === today ? ' is-today' : ''}">
+      <div class="between">
+        <h2>${d.name}</h2>
+        ${d.n === today ? '<span class="muted small">hoje</span>' : ''}
+      </div>
+      <ul class="list">${d.list.length ? d.list.map(s => `
+        <li class="sched-item" style="--c:${discColor(s.disciplineId)}">
+          <div class="grow">${esc(schedLabel(s))}</div>
+          <div class="sched-times">
+            <input type="time" class="sched-time" data-id="${esc(s.id)}" data-field="start" value="${esc(s.start)}" aria-label="Início: ${esc(schedLabel(s))}">
+            <span aria-hidden="true">–</span>
+            <input type="time" class="sched-time" data-id="${esc(s.id)}" data-field="end" value="${esc(s.end)}" aria-label="Fim: ${esc(schedLabel(s))}">
+          </div>
+          <button type="button" class="icon-btn danger" data-action="del-sched" data-id="${esc(s.id)}" aria-label="Apagar ${esc(schedLabel(s))} de ${d.name}">✕</button>
+        </li>`).join('') : '<li class="muted">Sem aulas.</li>'}</ul>
+    </section>`).join('');
+}
+
+$('#schedule-list').addEventListener('change', e => {
+  const t = e.target;
+  if (!t.classList.contains('sched-time')) return;
+  const s = state.schedule.find(x => x.id === t.dataset.id);
+  if (!s) return;
+  const next = Object.assign({}, s, { [t.dataset.field]: t.value });
+  if (!isTime(next.start) || !isTime(next.end) || next.end <= next.start) {
+    toast('A hora de fim tem de ser depois da hora de início.');
+    renderSchedule();
+    return;
+  }
+  s.start = next.start; s.end = next.end;
+  save();
+  renderSchedule();
+});
+
+$('#schedule-list').addEventListener('click', e => {
+  const b = e.target.closest('[data-action="del-sched"]');
+  if (!b) return;
+  if (!confirm('Apagar do horário?')) return;
+  state.schedule = state.schedule.filter(s => s.id !== b.dataset.id);
+  save();
+  renderSchedule();
+});
+
+$('#schedule-form').addEventListener('submit', e => {
+  e.preventDefault();
+  const f = e.target;
+  const fd = new FormData(f);
+  const day = Number(fd.get('day'));
+  const start = String(fd.get('start') || ''), end = String(fd.get('end') || '');
+  const discId = String(fd.get('discipline') || '');
+  const title = String(fd.get('title') || '').trim();
+  if (!isTime(start) || !isTime(end) || end <= start) { toast('A hora de fim tem de ser depois da hora de início.'); return; }
+  if (!findDisc(discId) && !title) { toast('Escolhe uma disciplina ou escreve um nome.'); return; }
+  const rec = { id: uid(), day, start, end, disciplineId: findDisc(discId) ? discId : '' };
+  if (title) rec.title = title;
+  const clean = cleanSched(rec);
+  if (!clean) { toast('Dia ou horas inválidos.'); return; }
+  state.schedule.push(clean);
+  save();
+  f.elements['title'].value = '';
+  renderSchedule();
+});
+
+/* ==========================================================
+   ARRANQUE
+   ========================================================== */
+function renderAll() {
+  renderSemesterSelect();
+  renderDashboard();
+  renderCalendar();
+  renderSchedule();
+  renderChecklist();
+  renderDaily();
+  renderFiles();
+  renderGrades();
+}
+
+// ---- ligação ao sync.js (nuvem) ----
+function applyRemoteState(remote) {
+  // guarda uma cópia dos dados deste aparelho antes de os substituir
+  try { localStorage.setItem(STORAGE_KEY + '-backup', JSON.stringify(state)); } catch (e) {}
+  state = normalizeState(Object.assign({}, remote, { theme: state.theme, currentSemester: state.currentSemester }));
+  saveLocal();
+  renderAll();
+}
+window.estudoApp = {
+  getState: () => state,
+  applyRemote: applyRemoteState,
+  touch() { state.updatedAt = Date.now(); saveLocal(); return state.updatedAt; },
+  toast
+};
+$('#auth-btn').addEventListener('click', () => {
+  if (window.estudoCloud) window.estudoCloud.toggle();
+  else toast('A sincronização não carregou. Verifica a ligação à internet e recarrega a página.');
+});
+
+// atualiza a contagem decrescente e as datas quando voltas à app
+setInterval(renderDashboard, 30000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) renderAll(); });
+
+applyTheme();
+renderAll();
+showTab('dashboard');
