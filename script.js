@@ -1293,60 +1293,53 @@ const WEEKDAYS = ['Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira
 const todayWeekday = () => ((new Date().getDay() + 6) % 7) + 1; // 1 = segunda … 7 = domingo
 const schedLabel = s => s.title || discName(s.disciplineId) || 'Sem nome';
 
-// calendário do horário: as aulas repetem-se todas as semanas dentro do semestre
-let schedYear = new Date().getFullYear();
-let schedMonth = new Date().getMonth();
-let schedSelected = toISO(new Date());
-const weekdayOf = iso => ((parseISO(iso).getDay() + 6) % 7) + 1;
-const sortSched = (a, b) => a.start.localeCompare(b.start) || a.end.localeCompare(b.end);
+// horário semanal em grelha (estilo tabela: dias em colunas, horas em linhas)
+const HOUR_COLORS = ['#7f9cbf', '#b94a59', '#c9a94e', '#557a5c', '#d6929a'];
+const DAY_COLORS = ['#557a5c', '#c9a94e', '#b94a59', '#7f9cbf', '#d6929a', '#557a5c', '#c9a94e'];
+const DAY_SHORT = ['SEGUNDA', 'TERÇA', 'QUARTA', 'QUINTA', 'SEXTA', 'SÁBADO', 'DOMINGO'];
+const toMin = t => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+const hhmm = t => t.replace(/^0/, '');
+let schedDay = todayWeekday();
 
 function semItems() {
   const ids = new Set(semDisciplines().map(d => d.id));
   return state.schedule.filter(s => !s.disciplineId || ids.has(s.disciplineId));
 }
-// fora das datas do semestre não há aulas
-function inSemester(iso) {
-  const sem = state.semesters[state.currentSemester];
-  return !(sem && sem.start && sem.end) || (iso >= sem.start && iso <= sem.end);
-}
-const itemsOn = (items, iso) => (inSemester(iso) ? items.filter(s => s.day === weekdayOf(iso)).sort(sortSched) : []);
 
 function renderSchedule() {
   fillDisciplineSelect($('#schedule-form [name="discipline"]'), { empty: true });
   const items = semItems();
+  const today = todayWeekday();
 
-  $('#sched-title').textContent = new Date(schedYear, schedMonth, 1).toLocaleDateString('pt-PT', { month: 'long', year: 'numeric' });
-  const first = new Date(schedYear, schedMonth, 1);
-  const start = new Date(schedYear, schedMonth, 1 - ((first.getDay() + 6) % 7)); // semana começa à segunda
-  const today = toISO(new Date());
-  let html = '';
-  for (let i = 0; i < 42; i++) {
-    const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
-    const iso = toISO(d);
-    const list = itemsOn(items, iso);
-    html += `
-      <button type="button" class="cal-cell${d.getMonth() !== schedMonth ? ' other' : ''}${iso === today ? ' today' : ''}${iso === schedSelected ? ' selected' : ''}"
-              data-date="${iso}" aria-label="${esc(longDate(iso))}${list.length ? `, ${list.length} aula(s)` : ''}">
-        <span class="cal-num">${d.getDate()}</span>
-        <span class="cal-dots">${list.slice(0, 4).map(s => `<span class="cal-dot" style="--c:${discColor(s.disciplineId)}"></span>`).join('')}</span>
-        ${list.slice(0, 3).map(s => `<span class="cal-chip" style="--c:${discColor(s.disciplineId)}">${esc(s.start)} ${esc(schedLabel(s))}</span>`).join('')}
-        ${list.length > 3 ? `<span class="cal-chip-more">+${list.length - 3}</span>` : ''}
-      </button>`;
+  // horas visíveis: 7:00–21:00, alarga se houver algo fora
+  let first = 7, last = 21;
+  items.forEach(s => { first = Math.min(first, Math.floor(toMin(s.start) / 60)); last = Math.max(last, Math.ceil(toMin(s.end) / 60)); });
+  const slots = (last - first) * 2; // linhas de 30 min
+  const row = t => Math.round((toMin(t) - first * 60) / 30) + 2; // linha 1 = cabeçalho
+
+  let html = `<div class="wg-corner" style="grid-row:1;grid-column:1"></div>`;
+  DAY_SHORT.forEach((d, i) => {
+    html += `<button type="button" class="wg-day${i + 1 === today ? ' is-today' : ''}${i + 1 === schedDay ? ' is-sel' : ''}" data-day="${i + 1}" style="grid-row:1;grid-column:${i + 2};--h:${DAY_COLORS[i]}">${d}</button>`;
+  });
+  for (let h = first; h < last; h++) {
+    const r = (h - first) * 2 + 2;
+    html += `<div class="wg-hour" style="grid-row:${r} / span 2;grid-column:1;--h:${HOUR_COLORS[(h - first) % HOUR_COLORS.length]}">${h}:00</div>`;
+    for (let c = 2; c <= 8; c++) html += `<div class="wg-cell" style="grid-row:${r} / span 2;grid-column:${c}"></div>`;
   }
-  $('#sched-grid').innerHTML = html;
+  items.forEach(s => {
+    html += `<button type="button" class="wg-block" data-day="${s.day}" style="grid-row:${row(s.start)} / ${row(s.end)};grid-column:${s.day + 1};--c:${discColor(s.disciplineId)}" title="${esc(schedLabel(s))} · ${esc(s.start)}–${esc(s.end)}">
+        <span class="wg-time">${esc(hhmm(s.start))} / ${esc(hhmm(s.end))}</span>
+        <span class="wg-name">${esc(schedLabel(s))}</span>
+      </button>`;
+  });
+  const grid = $('#week-grid');
+  grid.style.gridTemplateRows = `56px repeat(${slots}, 22px)`;
+  grid.innerHTML = html;
 
-  const used = new Set(items.map(s => s.disciplineId));
-  $('#sched-legend').innerHTML = semDisciplines().filter(d => used.has(d.id))
-    .map(d => `<span><i class="dot" style="--c:${isHex(d.color) ? d.color : DEFAULT_COLOR}"></i>${esc(d.name)}</span>`).join('') +
-    (used.has('') ? '<span><i class="dot" style="--c:var(--muted)"></i>Outros</span>' : '');
-
-  // aulas do dia selecionado (editar horas / apagar mexe em todas as semanas)
-  const wd = weekdayOf(schedSelected);
-  const dayList = itemsOn(items, schedSelected);
-  $('#sched-day-title').textContent = `${schedSelected === today ? 'Hoje · ' : ''}${longDate(schedSelected)}`;
-  $('#sched-day-sub').textContent = inSemester(schedSelected)
-    ? `Repete-se todas as ${WEEKDAYS[wd - 1].toLowerCase()}s. Mudar as horas ou apagar aplica-se a todas as semanas.`
-    : 'Fora das datas do semestre.';
+  // lista do dia escolhido (editar horas / apagar)
+  const dayList = items.filter(s => s.day === schedDay).sort((a, b) => a.start.localeCompare(b.start));
+  $('#sched-day-title').textContent = WEEKDAYS[schedDay - 1] + (schedDay === today ? ' · hoje' : '');
+  $('#sched-day-sub').textContent = 'Toca num dia ou numa aula do horário para a editar aqui.';
   $('#schedule-list').innerHTML = `<ul class="list">${dayList.length ? dayList.map(s => `
         <li class="sched-item" style="--c:${discColor(s.disciplineId)}">
           <div class="grow">${esc(schedLabel(s))}</div>
@@ -1356,21 +1349,14 @@ function renderSchedule() {
             <input type="time" class="sched-time" data-id="${esc(s.id)}" data-field="end" value="${esc(s.end)}" aria-label="Fim: ${esc(schedLabel(s))}">
           </div>
           <button type="button" class="icon-btn danger" data-action="del-sched" data-id="${esc(s.id)}" aria-label="Apagar ${esc(schedLabel(s))}">✕</button>
-        </li>`).join('') : '<li class="muted">Sem aulas neste dia.</li>'}</ul>`;
-  $('#schedule-form [name="day"]').value = String(wd);
+        </li>`).join('') : '<li class="muted">Nada neste dia.</li>'}</ul>`;
+  $('#schedule-form [name="day"]').value = String(schedDay);
 }
 
-function schedGoTo(iso) {
-  const d = parseISO(iso);
-  schedSelected = iso; schedYear = d.getFullYear(); schedMonth = d.getMonth();
-}
-$('#sched-prev').addEventListener('click', () => { schedMonth--; if (schedMonth < 0) { schedMonth = 11; schedYear--; } renderSchedule(); });
-$('#sched-next').addEventListener('click', () => { schedMonth++; if (schedMonth > 11) { schedMonth = 0; schedYear++; } renderSchedule(); });
-$('#sched-today').addEventListener('click', () => { schedGoTo(toISO(new Date())); renderSchedule(); });
-$('#sched-grid').addEventListener('click', e => {
-  const c = e.target.closest('.cal-cell');
-  if (!c) return;
-  schedGoTo(c.dataset.date);
+$('#week-grid').addEventListener('click', e => {
+  const b = e.target.closest('[data-day]');
+  if (!b) return;
+  schedDay = Number(b.dataset.day);
   renderSchedule();
 });
 

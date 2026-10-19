@@ -405,3 +405,39 @@ dialog::backdrop { background: rgba(2, 6, 23, .55); }
 @media (max-width: 420px) {
   .tab { font-size: .64rem; padding: 6px 0; }
 }
+
+/* ---------- Horário semanal (grelha) ---------- */
+.sched-card { padding: 12px; }
+.sched-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.week-grid {
+  --wg-bg: #f1f1f1; --wg-cell: #ffffff; --wg-text: #333;
+  display: grid; grid-template-columns: 58px repeat(7, minmax(84px, 1fr));
+  gap: 3px; min-width: 660px; padding: 10px; border-radius: 6px;
+  background: var(--wg-bg); font-family: Georgia, "Times New Roman", serif; color: var(--wg-text);
+}
+html[data-theme="dark"] .week-grid { --wg-bg: #1a2036; --wg-cell: #232b45; --wg-text: #e6eaf6; }
+.wg-corner { background: #d6929a; }
+.wg-day, .wg-hour { background: var(--h); color: #fff; display: grid; place-items: center; }
+.wg-day { border: 0; font: inherit; font-size: .78rem; letter-spacing: .02em; cursor: pointer; }
+.wg-day.is-sel { outline: 3px solid var(--wg-text); outline-offset: -3px; }
+.wg-day.is-today::after { content: "hoje"; display: block; font-size: .6rem; opacity: .85; }
+.wg-day.is-today { place-content: center; gap: 0; }
+.wg-hour { font-size: .72rem; margin: 2px 4px; }
+.wg-cell { background: var(--wg-cell); }
+.wg-block {
+  position: relative; z-index: 1; margin: 0; padding: 4px; border: 0; cursor: pointer;
+  background: var(--wg-cell); color: var(--wg-text); font: inherit;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;
+  box-shadow: inset 0 3px 0 var(--c); overflow: hidden;
+}
+.wg-block:hover { background: color-mix(in srgb, var(--c) 12%, var(--wg-cell)); }
+.wg-time { font-size: .7rem; }
+.wg-name { font-size: .74rem; text-transform: uppercase; line-height: 1.2; overflow-wrap: anywhere; }
+.wg-corner, .wg-hour { position: sticky; left: 0; z-index: 2; }
+.wg-hour { margin: 2px 4px 2px 0; }
+.wg-corner { box-shadow: -10px 0 0 var(--wg-bg); }
+.wg-hour { box-shadow: -10px 0 0 var(--wg-bg), 4px 0 0 var(--wg-bg); }
+@media (max-width: 600px) {
+  .week-grid { grid-template-columns: 50px repeat(7, minmax(78px, 1fr)); min-width: 600px; padding: 8px; }
+  .wg-name { font-size: .68rem; }
+}

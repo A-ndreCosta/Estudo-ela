@@ -158,18 +158,10 @@
 
     <!-- ============ Horário semanal ============ -->
     <section id="tab-schedule" class="tab-panel" aria-label="Horário semanal">
-      <div class="card">
-        <div class="cal-head">
-          <button type="button" class="icon-btn" id="sched-prev" aria-label="Mês anterior">‹</button>
-          <h2 id="sched-title"></h2>
-          <button type="button" class="icon-btn" id="sched-next" aria-label="Mês seguinte">›</button>
-          <button type="button" class="btn" id="sched-today">Hoje</button>
+      <div class="card sched-card">
+        <div class="sched-scroll">
+          <div class="week-grid" id="week-grid"></div>
         </div>
-        <div class="cal-weekdays" aria-hidden="true">
-          <span>Seg</span><span>Ter</span><span>Qua</span><span>Qui</span><span>Sex</span><span>Sáb</span><span>Dom</span>
-        </div>
-        <div class="cal-grid" id="sched-grid"></div>
-        <div class="legend" id="sched-legend"></div>
       </div>
 
       <div class="card">
