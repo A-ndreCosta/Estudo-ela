@@ -7,7 +7,7 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
 import { getAuth, onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut }
   from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
-import { getFirestore, doc, onSnapshot, setDoc }
+import { getFirestore, doc, getDoc, onSnapshot, setDoc }
   from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
 // Identificação pública do projeto (não é uma palavra-passe). O acesso aos dados
@@ -31,6 +31,10 @@ const db = getFirestore(fbApp);
 
 let user = null, ref = null, unsub = null, timer = null;
 
+// Documento partilhado: quem tiver o email autorizado nas regras do Firestore
+// vê e edita os mesmos dados (ver as regras no README).
+const SHARED_PATH = ['shared', 'state-ela'];
+
 /* ---------- Estado visual ---------- */
 const OFF_TEXT = 'Sincronização desligada. Toca na nuvem (☁) no topo e entra com a Google para veres os mesmos dados no telemóvel e no computador.';
 function setStatus(kind, detail) {
@@ -40,7 +44,7 @@ function setStatus(kind, detail) {
   if (kind === 'synced') {
     btn.classList.add('on');
     label = 'Sincronizado · toca para sair';
-    text = `Sincronizado${user && user.email ? ' como ' + user.email : ''}. Os dados são os mesmos em todos os aparelhos onde entrares.`;
+    text = `Sincronizado${user && user.email ? ' como ' + user.email : ''}. Os dados são partilhados com as contas autorizadas.`;
   }
   if (kind === 'error') {
     btn.classList.add('err');
@@ -86,9 +90,8 @@ function push() {
 function onRemote(snap) {
   if (snap.metadata && snap.metadata.hasPendingWrites) return; // eco da nossa própria escrita
   if (!snap.exists()) {
-    // primeira vez: envia o que existe neste aparelho
-    host.touch();
-    doPush();
+    // primeira vez: traz os dados antigos desta conta (documento pessoal), se houver; senão envia os deste aparelho
+    migrateOld().then(() => { host.touch(); doPush(); });
     return;
   }
   const data = snap.data();
@@ -99,6 +102,19 @@ function onRemote(snap) {
   if (rU > lU) { host.applyRemote(Object.assign({}, remote, { updatedAt: rU })); setStatus('synced'); }
   else if (lU > rU) { doPush(); }
   else setStatus('synced');
+}
+
+// passa os dados do antigo documento pessoal (users/<conta>/app/state-ela) para o partilhado
+async function migrateOld() {
+  if (!user) return;
+  try {
+    const old = await getDoc(doc(db, 'users', user.uid, 'app', 'state-ela'));
+    if (!old.exists()) return;
+    const data = old.data();
+    if ((data.updatedAt || 0) > (host.getState().updatedAt || 0)) {
+      host.applyRemote(Object.assign({}, JSON.parse(data.json), { updatedAt: data.updatedAt }));
+    }
+  } catch (e) { console.warn('Sync: não foi possível ler os dados antigos', e); }
 }
 
 /* ---------- Login / logout ---------- */
@@ -123,7 +139,7 @@ onAuthStateChanged(auth, u => {
   clearTimeout(timer);
   ref = null;
   if (!u) { setStatus('off'); return; }
-  ref = doc(db, 'users', u.uid, 'app', 'state-ela'); // documento só deste site: não mistura com os dados do outro
+  ref = doc(db, ...SHARED_PATH); // documento partilhado deste site: não mistura com os dados do outro
   setStatus('pending');
   unsub = onSnapshot(ref, onRemote, fail);
 });
