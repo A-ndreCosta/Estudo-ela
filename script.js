@@ -1312,10 +1312,12 @@ function renderSchedule() {
   const today = todayWeekday();
 
   // horas visíveis: 7:00–21:00, alarga se houver algo fora
-  let first = 7, last = 21;
-  items.forEach(s => { first = Math.min(first, Math.floor(toMin(s.start) / 60)); last = Math.max(last, Math.ceil(toMin(s.end) / 60)); });
+  // começa sempre às 9:00 (o que for mais cedo aparece cortado a partir das 9:00); alarga só para o fim
+  const first = 9;
+  let last = 21;
+  items.forEach(s => { last = Math.max(last, Math.ceil(toMin(s.end) / 60)); });
   const slots = (last - first) * 2; // linhas de 30 min
-  const row = t => Math.round((toMin(t) - first * 60) / 30) + 2; // linha 1 = cabeçalho
+  const row = t => Math.max(2, Math.round((toMin(t) - first * 60) / 30) + 2); // linha 1 = cabeçalho
 
   let html = `<div class="wg-corner" style="grid-row:1;grid-column:1"></div>`;
   DAY_SHORT.forEach((d, i) => {
@@ -1326,7 +1328,7 @@ function renderSchedule() {
     html += `<div class="wg-hour" style="grid-row:${r} / span 2;grid-column:1;--h:${HOUR_COLORS[(h - first) % HOUR_COLORS.length]}">${h}:00</div>`;
     for (let c = 2; c <= 8; c++) html += `<div class="wg-cell" style="grid-row:${r} / span 2;grid-column:${c}"></div>`;
   }
-  items.forEach(s => {
+  items.filter(s => toMin(s.end) > first * 60).forEach(s => {
     html += `<button type="button" class="wg-block" data-day="${s.day}" style="grid-row:${row(s.start)} / ${row(s.end)};grid-column:${s.day + 1};--c:${discColor(s.disciplineId)}" title="${esc(schedLabel(s))} · ${esc(s.start)}–${esc(s.end)}">
         <span class="wg-time">${esc(hhmm(s.start))} / ${esc(hhmm(s.end))}</span>
         <span class="wg-name">${esc(schedLabel(s))}</span>
