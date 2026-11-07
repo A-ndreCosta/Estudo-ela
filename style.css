@@ -443,7 +443,7 @@ html[data-theme="dark"] .week-grid { --wg-bg: #1a2036; --wg-cell: #232b45; --wg-
 }
 
 /* ============ Dinheiro (despesas e ganhos) ============ */
-.money-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.money-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
 .money-title { margin: 0; font-size: 1.35rem; }
 .money-month { display: flex; align-items: center; gap: 10px; }
 .money-month strong { min-width: 9.5em; text-align: center; }
