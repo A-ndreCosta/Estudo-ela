@@ -1,7 +1,7 @@
 /* ==========================================================
    Estudo · Dashboard — script.js
    Núcleo (estado, tema, semestres, definições, exportar/importar)
-   + Notas e Médias + Dashboard + Calendário + Horário + Checklist + Ficheiros.
+   + Notas e Médias + Dashboard + Calendário + Horário + Checklist + Dinheiro.
    A sincronização na nuvem está em sync.js.
    ========================================================== */
 'use strict';
@@ -1065,84 +1065,6 @@ taskForm.addEventListener('submit', e => {
   });
 });
 
-/* ==========================================================
-   TAREFAS DIÁRIAS (Ontem · Hoje · Amanhã lado a lado + próximos dias)
-   ========================================================== */
-const DAILY_COLS = [[-1, 'Ontem'], [0, 'Hoje'], [1, 'Amanhã']];
-
-function dailyTasksFor(day) {
-  const rank = t => (t.done ? 1 : 0);
-  return state.tasks.filter(t => !isBacklog(t) && coversDay(t, day))
-    .sort((a, b) => rank(a) - rank(b) || a.title.localeCompare(b.title));
-}
-
-function renderDaily() {
-  const today = todayISO();
-  $('#daily-cols').innerHTML = DAILY_COLS.map(([off, label]) => {
-    const day = addDays(today, off);
-    const list = dailyTasksFor(day);
-    const done = list.filter(t => t.done).length;
-    // ontem: avisa o que ficou por fazer
-    const late = off === -1 ? list.filter(t => !t.done).length : 0;
-    return `
-      <section class="card daily-col${off === 0 ? ' is-today' : ''}">
-        <div class="between">
-          <h2>${label}</h2>
-          <span class="muted small">${list.length ? `${done}/${list.length}` : ''}</span>
-        </div>
-        <p class="muted small daily-date">${esc(longDate(day))}${late ? ` · <span class="badge-late">${late} por fazer</span>` : ''}</p>
-        ${list.length ? `<div class="mini-progress"><span style="width:${Math.round(done / list.length * 100)}%"></span></div>` : ''}
-        <ul class="list">${list.length ? list.map(taskItem).join('') : '<li class="muted">Sem tarefas.</li>'}</ul>
-        <form class="daily-add" data-day="${day}">
-          <input name="title" placeholder="+ Tarefa para ${label.toLowerCase()}" required maxlength="120" aria-label="Nova tarefa para ${label}">
-        </form>
-      </section>`;
-  }).join('');
-
-  // próximos dias (depois de amanhã, 2 semanas)
-  const rows = [];
-  for (let i = 2; i <= 15; i++) {
-    const day = addDays(today, i);
-    const list = state.tasks.filter(t => !isBacklog(t) && !isRange(t) && t.date === day);
-    if (list.length) rows.push(`
-      <li class="upcoming-day">
-        <div class="upcoming-date"><strong>${esc(parseISO(day).toLocaleDateString('pt-PT', { weekday: 'short', day: 'numeric' }))}</strong></div>
-        <ul class="list">${list.map(taskItem).join('')}</ul>
-      </li>`);
-  }
-  $('#daily-upcoming').innerHTML = rows.join('') || '<li class="muted">Nada marcado para os próximos dias.</li>';
-}
-
-$('#tab-daily').addEventListener('submit', e => {
-  const f = e.target.closest('.daily-add');
-  if (!f) return;
-  e.preventDefault();
-  const title = String(new FormData(f).get('title')).trim();
-  if (!title) return;
-  state.tasks.push({ id: uid(), title, date: f.dataset.day, disciplineId: '', done: false });
-  save();
-  renderAll();
-  const again = $(`#tab-daily .daily-add[data-day="${f.dataset.day}"] input`);
-  if (again) again.focus();
-});
-$('#tab-daily').addEventListener('change', e => {
-  if (e.target.type !== 'checkbox') return;
-  const t = state.tasks.find(x => x.id === e.target.dataset.id);
-  if (!t) return;
-  setTaskDone(t, e.target.checked);
-  save();
-  renderAll();
-});
-$('#tab-daily').addEventListener('click', e => {
-  const ed = e.target.closest('[data-action="edit-task"]');
-  if (ed) { openTaskDialog(state.tasks.find(t => t.id === ed.dataset.id)); return; }
-  const b = e.target.closest('[data-action="del-task"]');
-  if (!b || !confirm('Apagar esta tarefa?')) return;
-  state.tasks = state.tasks.filter(t => t.id !== b.dataset.id);
-  save();
-  renderAll();
-});
-
 /* --- diálogo de tarefa (editar / concluir / apagar) --- */
 const taskDialog = $('#task-dialog');
 const taskEditForm = $('#task-edit-form');
@@ -1194,93 +1116,6 @@ $('#task-delete').addEventListener('click', () => {
   save();
   taskDialog.close();
   renderAll();
-});
-
-/* ==========================================================
-   REPOSITÓRIO DE FICHEIROS (só links: Drive, Dropbox, …)
-   Cada disciplina é uma secção que se recolhe/expande; a escolha
-   fica lembrada neste aparelho.
-   ========================================================== */
-const CATS = [['aulas', 'Aulas'], ['series', 'Séries'], ['resumos', 'Resumos']];
-const hostOf = url => { try { return new URL(url).hostname.replace(/^www\./, ''); } catch (e) { return ''; } };
-
-const UI_KEY = 'estudo-ela-ui-v1';
-let ui = {};
-try { ui = JSON.parse(localStorage.getItem(UI_KEY)) || {}; } catch (e) { ui = {}; }
-if (!ui.collapsed || typeof ui.collapsed !== 'object') ui.collapsed = {};
-const saveUI = () => { try { localStorage.setItem(UI_KEY, JSON.stringify(ui)); } catch (e) {} };
-
-function renderFiles() {
-  fillDisciplineSelect($('#link-form [name="discipline"]'));
-  const box = $('#files-list');
-  const discs = semDisciplines();
-  if (!discs.length) {
-    box.innerHTML = '<div class="card empty">Ainda não há disciplinas neste semestre. Adiciona-as em ⚙ Definições.</div>';
-    return;
-  }
-  box.innerHTML = discs.map(d => {
-    const links = state.links.filter(l => l.disciplineId === d.id);
-    const n = links.length;
-    const groups = CATS.map(([key, label]) => {
-      const ls = links.filter(l => l.category === key);
-      if (!ls.length) return '';
-      return `<h4 class="file-cat">${label}</h4>
-        <div class="stack">${ls.map(l => `
-          <div class="file-link">
-            <a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${esc(l.name)}</a>
-            <span class="muted">${esc(hostOf(l.url))}</span>
-            <button type="button" class="icon-btn danger" data-action="del-link" data-id="${esc(l.id)}" aria-label="Apagar ${esc(l.name)}">✕</button>
-          </div>`).join('')}</div>`;
-    }).join('');
-    return `
-      <details class="card file-group" data-disc="${esc(d.id)}"${ui.collapsed[d.id] ? '' : ' open'} style="--c:${isHex(d.color) ? d.color : DEFAULT_COLOR}">
-        <summary>
-          <span class="dot"></span>
-          <h2>${esc(d.name)}</h2>
-          <span class="muted file-count">${n} ${n === 1 ? 'ficheiro' : 'ficheiros'}</span>
-          <span class="chevron" aria-hidden="true">▾</span>
-        </summary>
-        <div class="file-body">${groups || '<p class="muted">Ainda sem links.</p>'}</div>
-      </details>`;
-  }).join('');
-}
-
-// o evento "toggle" não sobe na árvore: apanha-se na fase de captura
-$('#files-list').addEventListener('toggle', e => {
-  const det = e.target && e.target.closest ? e.target.closest('details.file-group') : null;
-  if (!det) return;
-  if (det.open) delete ui.collapsed[det.dataset.disc]; else ui.collapsed[det.dataset.disc] = true;
-  saveUI();
-}, true);
-
-$('#link-form').addEventListener('submit', e => {
-  e.preventDefault();
-  const f = e.target;
-  const fd = new FormData(f);
-  const discId = String(fd.get('discipline'));
-  const category = String(fd.get('category'));
-  const name = String(fd.get('name')).trim();
-  let url = String(fd.get('url')).trim();
-  try {
-    const u = new URL(url);
-    if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Error('protocolo');
-    url = u.href;
-  } catch (err) { toast('O link tem de começar por http:// ou https://'); return; }
-  if (!name || !findDisc(discId) || !CATS.some(c => c[0] === category)) { toast('Preenche a disciplina, a categoria e o nome.'); return; }
-  state.links.push({ id: uid(), disciplineId: discId, category, name, url });
-  save();
-  f.querySelector('[name="name"]').value = '';
-  f.querySelector('[name="url"]').value = '';
-  renderFiles();
-});
-
-$('#files-list').addEventListener('click', e => {
-  const b = e.target.closest('[data-action="del-link"]');
-  if (!b) return;
-  if (!confirm('Apagar este link?')) return;
-  state.links = state.links.filter(l => l.id !== b.dataset.id);
-  save();
-  renderFiles();
 });
 
 /* ==========================================================
@@ -1408,6 +1243,126 @@ $('#schedule-form').addEventListener('submit', e => {
 });
 
 /* ==========================================================
+   DINHEIRO (despesas e ganhos por mês)
+   Guardado só neste browser, numa chave própria (não vai para a nuvem
+   nem entra na exportação dos dados de estudo).
+   ========================================================== */
+const MONEY_KEY = 'estudo-ela-dinheiro-v1';
+const MONEY_CATS = {
+  expense: ['Casa', 'Supermercado', 'Restaurantes', 'Transportes', 'Saúde', 'Lazer', 'Estudos', 'Compras', 'Outros'],
+  income: ['Mesada', 'Salário', 'Trabalho', 'Presente', 'Outros']
+};
+const MONTHS_PT = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+const eur = n => n.toLocaleString('pt-PT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+
+let money = [];
+try {
+  const raw = JSON.parse(localStorage.getItem(MONEY_KEY));
+  if (Array.isArray(raw)) {
+    money = raw.filter(m => m && typeof m.id === 'string' && (m.kind === 'expense' || m.kind === 'income') &&
+      Number.isFinite(m.amount) && m.amount > 0 && isISODate(m.date));
+  }
+} catch (e) { money = []; }
+const saveMoney = () => {
+  try { localStorage.setItem(MONEY_KEY, JSON.stringify(money)); }
+  catch (e) { toast('Não foi possível guardar (armazenamento cheio ou bloqueado).'); }
+};
+
+let moneyKind = 'expense';
+let moneyMonth = todayISO().slice(0, 7); // AAAA-MM
+
+function moneyFillCategories() {
+  const sel = $('#money-form [name="category"]');
+  const keep = sel.value;
+  sel.innerHTML = MONEY_CATS[moneyKind].map(c => `<option>${esc(c)}</option>`).join('');
+  if (MONEY_CATS[moneyKind].includes(keep)) sel.value = keep;
+}
+
+function renderMoney() {
+  const [y, m] = moneyMonth.split('-').map(Number);
+  const mName = MONTHS_PT[m - 1];
+  $('#money-month-label').textContent = `${mName.charAt(0).toUpperCase() + mName.slice(1)} de ${y}`;
+  $('#money-exp-label').textContent = `Despesas de ${mName}`;
+  $('#money-inc-label').textContent = `Ganhos de ${mName}`;
+
+  const items = money.filter(x => x.date.startsWith(moneyMonth))
+    .sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id));
+  const sum = k => items.filter(x => x.kind === k).reduce((t, x) => t + x.amount, 0);
+  const cnt = k => items.filter(x => x.kind === k).length;
+  const regs = n => `${n} ${n === 1 ? 'registo' : 'registos'}`;
+  $('#money-exp-total').textContent = eur(sum('expense'));
+  $('#money-inc-total').textContent = eur(sum('income'));
+  $('#money-exp-count').textContent = regs(cnt('expense'));
+  $('#money-inc-count').textContent = regs(cnt('income'));
+  $('#money-count').textContent = items.length;
+
+  $('#money-list').innerHTML = items.length ? items.map(x => `
+    <li class="money-item ${x.kind}">
+      <div class="grow">
+        <strong>${esc(x.category)}</strong>${x.note ? ` <span class="muted">· ${esc(x.note)}</span>` : ''}
+        <div class="muted small">${esc(fmtDate(x.date))}</div>
+      </div>
+      <span class="money-amount">${x.kind === 'expense' ? '−' : '+'}${esc(eur(x.amount))}</span>
+      <button type="button" class="icon-btn danger" data-action="del-money" data-id="${esc(x.id)}" aria-label="Apagar registo">✕</button>
+    </li>`).join('')
+    : `<li class="muted">Ainda não há registos em ${esc(mName)} de ${y}. Usa o formulário para adicionar a primeira despesa ou o primeiro ganho.</li>`;
+}
+
+function moneySetKind(k) {
+  moneyKind = k;
+  $$('#money-form .money-kind button').forEach(b => b.classList.toggle('active', b.dataset.kind === k));
+  $('#money-form').dataset.kind = k;
+  $('#money-submit').textContent = k === 'expense' ? 'Adicionar despesa' : 'Adicionar ganho';
+  moneyFillCategories();
+}
+
+function moneyShift(delta) {
+  const [y, m] = moneyMonth.split('-').map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  moneyMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  renderMoney();
+}
+
+$('#money-prev').addEventListener('click', () => moneyShift(-1));
+$('#money-next').addEventListener('click', () => moneyShift(1));
+$('#money-form .money-kind').addEventListener('click', e => {
+  const b = e.target.closest('button[data-kind]');
+  if (b) moneySetKind(b.dataset.kind);
+});
+
+$('#money-form').addEventListener('submit', e => {
+  e.preventDefault();
+  const f = e.target;
+  const fd = new FormData(f);
+  const amount = Math.round(parseFloat(String(fd.get('amount')).replace(/\s/g, '').replace(',', '.')) * 100) / 100;
+  const date = String(fd.get('date'));
+  const category = String(fd.get('category'));
+  if (!Number.isFinite(amount) || amount <= 0) { toast('Mete um valor maior que zero.'); return; }
+  if (!isISODate(date)) { toast('Escolhe uma data.'); return; }
+  const entry = { id: uid(), kind: moneyKind, amount, date, category };
+  const note = String(fd.get('note') || '').trim();
+  if (note) entry.note = note;
+  money.push(entry);
+  saveMoney();
+  f.elements['amount'].value = '';
+  f.elements['note'].value = '';
+  moneyMonth = date.slice(0, 7); // mostra o mês onde acabaste de registar
+  renderMoney();
+  f.elements['amount'].focus();
+});
+
+$('#money-list').addEventListener('click', e => {
+  const b = e.target.closest('[data-action="del-money"]');
+  if (!b || !confirm('Apagar este registo?')) return;
+  money = money.filter(x => x.id !== b.dataset.id);
+  saveMoney();
+  renderMoney();
+});
+
+$('#money-form [name="date"]').value = todayISO();
+moneySetKind('expense');
+
+/* ==========================================================
    ARRANQUE
    ========================================================== */
 function renderAll() {
@@ -1416,8 +1371,7 @@ function renderAll() {
   renderCalendar();
   renderSchedule();
   renderChecklist();
-  renderDaily();
-  renderFiles();
+  renderMoney();
   renderGrades();
 }
 

@@ -52,17 +52,13 @@
       <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
       <span>Horário</span>
     </button>
-    <button type="button" class="tab" data-tab="daily">
-      <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-      <span>Diário</span>
-    </button>
-    <button type="button" class="tab" data-tab="files">
-      <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
-      <span>Ficheiros</span>
-    </button>
     <button type="button" class="tab" data-tab="grades">
       <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 20V11M12 20V4M18 20v-6"/></svg>
       <span>Notas</span>
+    </button>
+    <button type="button" class="tab" data-tab="money">
+      <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 10v.01M18 14v.01"/></svg>
+      <span>Dinheiro</span>
     </button>
   </nav>
 
@@ -196,35 +192,6 @@
       </div>
     </section>
 
-    <!-- ============ Tarefas diárias ============ -->
-    <section id="tab-daily" class="tab-panel" aria-label="Tarefas diárias">
-      <div class="daily-cols" id="daily-cols"></div>
-      <div class="card">
-        <h2>Próximos dias</h2>
-        <ul class="list upcoming" id="daily-upcoming"></ul>
-      </div>
-    </section>
-
-    <!-- ============ 4. Repositório de ficheiros (links) ============ -->
-    <section id="tab-files" class="tab-panel" aria-label="Repositório de ficheiros">
-      <div class="card">
-        <h2>Adicionar link</h2>
-        <p class="muted">Cola aqui o link do Google Drive, Dropbox, etc. Os ficheiros não são carregados para a app.</p>
-        <form id="link-form" class="row">
-          <select name="discipline" required aria-label="Disciplina"></select>
-          <select name="category" required aria-label="Categoria">
-            <option value="aulas">Aulas</option>
-            <option value="series">Séries</option>
-            <option value="resumos">Resumos</option>
-          </select>
-          <input name="name" placeholder="Nome" required maxlength="80" aria-label="Nome">
-          <input name="url" type="url" placeholder="https://…" required aria-label="Link">
-          <button class="btn btn-primary">Adicionar</button>
-        </form>
-      </div>
-      <div id="files-list"></div>
-    </section>
-
     <!-- ============ 5. Notas e médias ============ -->
     <section id="tab-grades" class="tab-panel" aria-label="Notas e médias">
       <div class="stats">
@@ -238,6 +205,57 @@
         </div>
       </div>
       <div id="grades-list"></div>
+    </section>
+
+    <!-- ============ Dinheiro (despesas e ganhos) ============ -->
+    <section id="tab-money" class="tab-panel" aria-label="Despesas e ganhos">
+      <div class="money-head">
+        <h2 class="money-title">Despesas e Ganhos</h2>
+        <div class="money-month">
+          <button type="button" class="icon-btn" id="money-prev" aria-label="Mês anterior">‹</button>
+          <strong id="money-month-label"></strong>
+          <button type="button" class="icon-btn" id="money-next" aria-label="Mês seguinte">›</button>
+        </div>
+      </div>
+      <p class="muted small money-note">Guardado só neste browser</p>
+
+      <div class="money-totals">
+        <div class="money-total expense">
+          <span class="money-label" id="money-exp-label">Despesas</span>
+          <strong id="money-exp-total">0,00 €</strong>
+          <span class="muted small" id="money-exp-count">0 registos</span>
+        </div>
+        <div class="money-total income">
+          <span class="money-label" id="money-inc-label">Ganhos</span>
+          <strong id="money-inc-total">0,00 €</strong>
+          <span class="muted small" id="money-inc-count">0 registos</span>
+        </div>
+      </div>
+
+      <div class="money-cols">
+        <form class="card stack" id="money-form">
+          <h2>Novo registo</h2>
+          <div class="money-kind" role="group" aria-label="Tipo de registo">
+            <button type="button" class="active" data-kind="expense">Despesa</button>
+            <button type="button" data-kind="income">Ganho</button>
+          </div>
+          <div class="row">
+            <label>Valor (€) <input name="amount" type="text" inputmode="decimal" placeholder="0,00" required autocomplete="off"></label>
+            <label>Data <input name="date" type="date" required></label>
+          </div>
+          <label>Categoria <select name="category"></select></label>
+          <label>Nota (opcional) <input name="note" maxlength="80" placeholder="ex.: supermercado"></label>
+          <button class="btn btn-primary money-submit" id="money-submit">Adicionar despesa</button>
+        </form>
+
+        <div class="card">
+          <div class="between">
+            <h2>Movimentos</h2>
+            <span class="muted" id="money-count">0</span>
+          </div>
+          <ul class="list" id="money-list"></ul>
+        </div>
+      </div>
     </section>
 
   </main>

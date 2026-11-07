@@ -441,3 +441,35 @@ html[data-theme="dark"] .week-grid { --wg-bg: #1a2036; --wg-cell: #232b45; --wg-
   .week-grid { grid-template-columns: 50px repeat(7, minmax(78px, 1fr)); min-width: 600px; padding: 8px; }
   .wg-name { font-size: .68rem; }
 }
+
+/* ============ Dinheiro (despesas e ganhos) ============ */
+.money-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.money-title { margin: 0; font-size: 1.35rem; }
+.money-month { display: flex; align-items: center; gap: 10px; }
+.money-month strong { min-width: 9.5em; text-align: center; }
+.money-note { margin: 4px 0 14px; }
+
+.money-totals { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+.money-total { --t: var(--danger); display: flex; flex-direction: column; gap: 4px; padding: 16px; border-radius: var(--radius);
+  background: color-mix(in srgb, var(--t) 12%, var(--surface)); border: 1px solid color-mix(in srgb, var(--t) 22%, var(--border)); }
+.money-total.income { --t: var(--success); }
+.money-total .money-label { font-size: .8rem; font-weight: 600; color: var(--t); }
+.money-total strong { font-size: 1.9rem; line-height: 1.2; font-variant-numeric: tabular-nums; }
+
+.money-cols { display: grid; grid-template-columns: 1fr; gap: 16px; align-items: start; }
+@media (min-width: 900px) { .money-cols { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+.money-cols .card { margin-bottom: 0; }
+
+.money-kind { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; border-radius: 12px; background: var(--surface-2); }
+.money-kind button { border: 0; padding: 10px; border-radius: 9px; background: transparent; color: var(--text); font: inherit; font-weight: 600; cursor: pointer; }
+.money-kind button.active { background: var(--danger); color: #fff; }
+#money-form[data-kind="income"] .money-kind button.active { background: var(--success); color: #fff; }
+#money-form[data-kind="income"] .money-submit { background: var(--success); border-color: var(--success); }
+#money-form:not([data-kind="income"]) .money-submit { background: var(--danger); border-color: var(--danger); }
+.money-submit { color: #fff; width: 100%; padding: 12px; }
+#money-form label { display: flex; flex-direction: column; gap: 6px; font-size: .85rem; font-weight: 600; flex: 1; min-width: 0; }
+
+.money-item { display: flex; align-items: center; gap: 10px; }
+.money-amount { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.money-item.expense .money-amount { color: var(--danger); }
+.money-item.income .money-amount { color: var(--success); }
