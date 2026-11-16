@@ -28,3 +28,11 @@ service cloud.firestore {
 ```
 
 Para acrescentar mais pessoas, junta o email à lista.
+
+## Dinheiro
+
+Os registos de despesas e ganhos fazem parte do mesmo documento e sincronizam
+como o resto. Os registos de todos os aparelhos são juntados por id (ninguém
+perde nada) e os apagados ficam registados para não voltarem a aparecer.
+Os registos antigos guardados só num aparelho são migrados no primeiro arranque
+(a chave antiga fica no aparelho como cópia de segurança).

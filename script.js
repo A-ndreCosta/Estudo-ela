@@ -102,6 +102,9 @@ function seedState() {
 }
 
 /* ---------- Estado + localStorage ---------- */
+const validMoney = m => !!m && typeof m.id === 'string' && (m.kind === 'expense' || m.kind === 'income') &&
+  Number.isFinite(m.amount) && m.amount > 0 && isISODate(m.date);
+
 /* Tarefa: com dia (date), com início e fim (start+end) ou sem prazo (date vazio). */
 function normalizeTask(t) {
   if (!t || typeof t.title !== 'string') return null;
@@ -134,9 +137,12 @@ function normalizeState(s) {
   const st = Object.assign({
     version: 1, updatedAt: 0, currentSemester: 's1', theme: null,
     semesters: seedState().semesters,
-    disciplines: [], grades: [], events: [], tasks: [], links: [], schedule: []
+    disciplines: [], grades: [], events: [], tasks: [], links: [], schedule: [],
+    money: [], moneyDeleted: []
   }, s);
-  ['disciplines', 'grades', 'events', 'tasks', 'links', 'schedule'].forEach(k => { if (!Array.isArray(st[k])) st[k] = []; });
+  ['disciplines', 'grades', 'events', 'tasks', 'links', 'schedule', 'money', 'moneyDeleted'].forEach(k => { if (!Array.isArray(st[k])) st[k] = []; });
+  st.money = st.money.filter(validMoney);
+  st.moneyDeleted = st.moneyDeleted.filter(id => typeof id === 'string');
   if (!st.semesters || typeof st.semesters !== 'object') st.semesters = seedState().semesters;
   st.disciplines.forEach(d => { if (!Array.isArray(d.components)) d.components = []; });
   st.tasks = st.tasks.map(normalizeTask).filter(Boolean);
@@ -1244,10 +1250,12 @@ $('#schedule-form').addEventListener('submit', e => {
 
 /* ==========================================================
    DINHEIRO (despesas e ganhos por mês)
-   Guardado só neste browser, numa chave própria (não vai para a nuvem
-   nem entra na exportação dos dados de estudo).
+   Os registos ficam dentro do estado (state.money) e sincronizam com a nuvem
+   como o resto. Para ninguém perder dados, os registos de todos os aparelhos
+   são JUNTOS (por id) e os apagados ficam em state.moneyDeleted.
    ========================================================== */
-const MONEY_KEY = 'estudo-ela-dinheiro-v1';
+const MONEY_KEY = 'estudo-ela-dinheiro-v1';          // chave antiga (só neste aparelho)
+const MONEY_MIGRATED_KEY = 'estudo-ela-dinheiro-migrado-v1';
 const MONEY_CATS = {
   expense: ['Casa', 'Supermercado', 'Restaurantes', 'Transportes', 'Saúde', 'Lazer', 'Estudos', 'Compras', 'Outros'],
   income: ['Mesada', 'Salário', 'Trabalho', 'Presente', 'Outros']
@@ -1255,18 +1263,29 @@ const MONEY_CATS = {
 const MONTHS_PT = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
 const eur = n => n.toLocaleString('pt-PT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
 
-let money = [];
-try {
-  const raw = JSON.parse(localStorage.getItem(MONEY_KEY));
-  if (Array.isArray(raw)) {
-    money = raw.filter(m => m && typeof m.id === 'string' && (m.kind === 'expense' || m.kind === 'income') &&
-      Number.isFinite(m.amount) && m.amount > 0 && isISODate(m.date));
-  }
-} catch (e) { money = []; }
-const saveMoney = () => {
-  try { localStorage.setItem(MONEY_KEY, JSON.stringify(money)); }
-  catch (e) { toast('Não foi possível guardar (armazenamento cheio ou bloqueado).'); }
-};
+// junta registos de dois lados: união por id, menos os apagados em qualquer um dos lados
+function mergeMoneyInto(target, otherMoney, otherDeleted) {
+  const deleted = new Set([...(target.moneyDeleted || []), ...(Array.isArray(otherDeleted) ? otherDeleted : [])]);
+  const byId = new Map();
+  [...(target.money || []), ...(Array.isArray(otherMoney) ? otherMoney.filter(validMoney) : [])]
+    .forEach(m => { if (!deleted.has(m.id) && !byId.has(m.id)) byId.set(m.id, m); });
+  target.money = [...byId.values()];
+  target.moneyDeleted = [...deleted];
+}
+
+// migração única: traz os registos antigos guardados só neste aparelho
+(function migrateLocalMoney() {
+  try {
+    if (localStorage.getItem(MONEY_MIGRATED_KEY)) return;
+    const raw = JSON.parse(localStorage.getItem(MONEY_KEY));
+    if (Array.isArray(raw) && raw.length) {
+      const before = state.money.length;
+      mergeMoneyInto(state, raw, []);
+      if (state.money.length !== before) save();   // sobe para a nuvem quando houver ligação
+    }
+    localStorage.setItem(MONEY_MIGRATED_KEY, '1'); // a chave antiga fica intacta como cópia de segurança
+  } catch (e) { console.warn('Dinheiro: não foi possível migrar os registos antigos.', e); }
+})();
 
 let moneyKind = 'expense';
 let moneyMonth = todayISO().slice(0, 7); // AAAA-MM
@@ -1285,7 +1304,7 @@ function renderMoney() {
   $('#money-exp-label').textContent = `Despesas de ${mName}`;
   $('#money-inc-label').textContent = `Ganhos de ${mName}`;
 
-  const items = money.filter(x => x.date.startsWith(moneyMonth))
+  const items = state.money.filter(x => x.date.startsWith(moneyMonth))
     .sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id));
   const sum = k => items.filter(x => x.kind === k).reduce((t, x) => t + x.amount, 0);
   const cnt = k => items.filter(x => x.kind === k).length;
@@ -1342,8 +1361,8 @@ $('#money-form').addEventListener('submit', e => {
   const entry = { id: uid(), kind: moneyKind, amount, date, category };
   const note = String(fd.get('note') || '').trim();
   if (note) entry.note = note;
-  money.push(entry);
-  saveMoney();
+  state.money.push(entry);
+  save();
   f.elements['amount'].value = '';
   f.elements['note'].value = '';
   moneyMonth = date.slice(0, 7); // mostra o mês onde acabaste de registar
@@ -1354,8 +1373,9 @@ $('#money-form').addEventListener('submit', e => {
 $('#money-list').addEventListener('click', e => {
   const b = e.target.closest('[data-action="del-money"]');
   if (!b || !confirm('Apagar este registo?')) return;
-  money = money.filter(x => x.id !== b.dataset.id);
-  saveMoney();
+  state.money = state.money.filter(x => x.id !== b.dataset.id);
+  if (!state.moneyDeleted.includes(b.dataset.id)) state.moneyDeleted.push(b.dataset.id);
+  save();
   renderMoney();
 });
 
@@ -1379,7 +1399,11 @@ function renderAll() {
 function applyRemoteState(remote) {
   // guarda uma cópia dos dados deste aparelho antes de os substituir
   try { localStorage.setItem(STORAGE_KEY + '-backup', JSON.stringify(state)); } catch (e) {}
-  state = normalizeState(Object.assign({}, remote, { theme: state.theme, currentSemester: state.currentSemester }));
+  // o dinheiro nunca é substituído: já foi juntado com o da nuvem (ver mergeMoney)
+  state = normalizeState(Object.assign({}, remote, {
+    theme: state.theme, currentSemester: state.currentSemester,
+    money: state.money, moneyDeleted: state.moneyDeleted
+  }));
   saveLocal();
   renderAll();
 }
@@ -1387,6 +1411,14 @@ window.estudoApp = {
   getState: () => state,
   applyRemote: applyRemoteState,
   touch() { state.updatedAt = Date.now(); saveLocal(); return state.updatedAt; },
+  // junta o dinheiro vindo da nuvem ao local; devolve true se a nuvem ainda não tem tudo o que há aqui
+  mergeMoney(remote) {
+    const rIds = new Set((remote.money || []).map(m => m.id));
+    const rDel = new Set(remote.moneyDeleted || []);
+    mergeMoneyInto(state, remote.money, remote.moneyDeleted);
+    saveLocal();
+    return state.money.some(m => !rIds.has(m.id)) || state.moneyDeleted.some(id => !rDel.has(id));
+  },
   toast
 };
 $('#auth-btn').addEventListener('click', () => {

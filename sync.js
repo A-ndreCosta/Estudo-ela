@@ -97,10 +97,16 @@ function onRemote(snap) {
   const data = snap.data();
   let remote;
   try { remote = JSON.parse(data.json); } catch (e) { fail(e); return; }
+  // dinheiro: junta sempre os registos dos dois lados (nunca um substitui o outro)
+  const cloudMissing = host.mergeMoney(remote);
   const rU = data.updatedAt || 0;
   const lU = host.getState().updatedAt || 0;
-  if (rU > lU) { host.applyRemote(Object.assign({}, remote, { updatedAt: rU })); setStatus('synced'); }
+  if (rU > lU) {
+    host.applyRemote(Object.assign({}, remote, { updatedAt: rU }));
+    if (cloudMissing) { host.touch(); doPush(); } else setStatus('synced');
+  }
   else if (lU > rU) { doPush(); }
+  else if (cloudMissing) { host.touch(); doPush(); }
   else setStatus('synced');
 }
 
